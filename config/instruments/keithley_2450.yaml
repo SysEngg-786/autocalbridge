@@ -1,0 +1,59 @@
+# File: config/instruments/keithley_2450.yaml
+# Path: /autocalbridge/config/instruments/keithley_2450.yaml
+# Purpose: YAML behavior definition for Keithley 2450 SMU (DUT mode).
+
+# ============================================================
+# PROFILE AUTHENTICITY STATUS
+# ============================================================
+# status:
+#   verified_manual           -> exact response/example from official manual
+#   manual_derived            -> derived from manual rules, no exact example
+#   placeholder_unverified    -> project-defined test profile only
+# ============================================================
+profile_status: placeholder_unverified
+
+source_document:
+  title: ""
+  document_number: ""
+  version: ""
+  url: ""
+  section: ""
+
+# NOTE:
+# This profile is a project-defined Keithley 2450 SMU DUT emulation.
+# It has not yet been validated against an official Keithley 2450
+# Reference Manual or a real instrument query. Until that reference is
+# attached, this profile remains placeholder_unverified and must not be
+# presented as genuine Keithley behavior.
+
+# ============================================================
+# INSTRUMENT IDENTITY
+# ============================================================
+vendor: Keithley
+model: "2450"
+mode: dut
+idn: "KEITHLEY INSTRUMENTS,2450,K123456,A.02.10"
+default_target: 1.0
+noise: 0.002
+offset: 0.0
+fail_rate: 0.0
+
+# ============================================================
+# COMMAND RESPONSES
+# ============================================================
+# Common commands such as *IDN?, *ESR?, *OPC?, and SYST:ERR? are handled
+# centrally by MockInstrument and security/policy_loader.py. They are not
+# repeated here.
+# ============================================================
+responses:
+  "READ?": null  # Dynamic
+
+# ============================================================
+# WRITE COMMANDS
+# ============================================================
+# Common writes such as *RST and *CLS are handled centrally by
+# MockInstrument and security/policy_loader.py. They are not repeated here.
+# ============================================================
+write_commands:
+  - "SENS:FUNC 'VOLT:DC'"
+  - "SENS:VOLT:RANG 10"

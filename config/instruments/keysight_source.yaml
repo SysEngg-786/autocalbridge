@@ -1,0 +1,57 @@
+# File: config/instruments/keysight_source.yaml
+# Path: /autocalbridge/config/instruments/keysight_source.yaml
+# Purpose: YAML behavior definition for Keysight source (reference standard).
+
+# ============================================================
+# PROFILE AUTHENTICITY STATUS
+# ============================================================
+# status:
+#   verified_manual           -> exact response/example from official manual
+#   manual_derived            -> derived from manual rules, no exact example
+#   placeholder_unverified    -> project-defined test profile only
+# ============================================================
+profile_status: placeholder_unverified
+
+source_document:
+  title: ""
+  document_number: ""
+  version: ""
+  url: ""
+  section: ""
+
+# NOTE:
+# This profile is a generic synthetic Keysight source/reference profile.
+# It is not yet backed by an official Keysight model manual or real
+# instrument query. Until a real source model is selected and an
+# authoritative document is attached, this profile remains
+# placeholder_unverified and must not be presented as genuine Keysight
+# behavior.
+
+# ============================================================
+# INSTRUMENT IDENTITY
+# ============================================================
+vendor: Keysight
+model: "Source"
+mode: source
+idn: "Keysight TECHNOLOGIES,Source,MOCK12345,A.02.10"
+source_range: 10.0
+
+# ============================================================
+# COMMAND RESPONSES
+# ============================================================
+responses:
+  "*IDN?": "Keysight TECHNOLOGIES,Source,MOCK12345,A.02.10"
+  "*ESR?": "0"
+  "SYST:ERR?": '0,"No error"'
+  "*OPC?": "1"
+  "SOUR:VOLT?": "0.000000"
+  "SOUR:RANG?": "10.000000"
+
+# ============================================================
+# WRITE COMMANDS
+# ============================================================
+write_commands:
+  - "SOUR:VOLT"
+  - "SOUR:RANG"
+  - "*RST"
+  - "*CLS"

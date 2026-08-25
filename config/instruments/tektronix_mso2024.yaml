@@ -1,0 +1,58 @@
+# File: config/instruments/tektronix_mso2024.yaml
+# Path: /autocalbridge/config/instruments/tektronix_mso2024.yaml
+# Purpose: YAML behavior definition for Tektronix MSO2024 oscilloscope (DUT mode).
+
+# ============================================================
+# PROFILE AUTHENTICITY STATUS
+# ============================================================
+# status:
+#   verified_manual           -> exact response/example from official manual
+#   manual_derived            -> derived from manual rules, no exact example
+#   placeholder_unverified    -> project-defined test profile only
+# ============================================================
+profile_status: placeholder_unverified
+
+source_document:
+  title: ""
+  document_number: ""
+  version: ""
+  url: ""
+  section: ""
+
+# NOTE:
+# This profile is a project-defined Tektronix MSO2024 DUT emulation.
+# It has not yet been validated against an official Tektronix MSO2000
+# Series Programmer Manual or a real instrument query. Until that
+# reference is attached, this profile remains placeholder_unverified
+# and must not be presented as genuine Tektronix behavior.
+
+# ============================================================
+# INSTRUMENT IDENTITY
+# ============================================================
+vendor: Tektronix
+model: "MSO2024"
+mode: dut
+idn: "TEKTRONIX,MSO2024,C123456,A.02.10"
+default_target: 1.0
+noise: 0.005
+offset: 0.0
+fail_rate: 0.0
+
+# ============================================================
+# COMMAND RESPONSES
+# ============================================================
+# Common commands such as *IDN?, *ESR?, *OPC?, and SYST:ERR? are handled
+# centrally by MockInstrument and security/policy_loader.py. They are not
+# repeated here.
+# ============================================================
+responses:
+  "MEASU:IMM:VAL?": null  # Dynamic
+
+# ============================================================
+# WRITE COMMANDS
+# ============================================================
+# Common writes such as *RST and *CLS are handled centrally by
+# MockInstrument and security/policy_loader.py. They are not repeated here.
+# ============================================================
+write_commands:
+  - "AUTOSET EXECUTE"

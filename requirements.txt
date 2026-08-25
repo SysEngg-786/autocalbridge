@@ -1,0 +1,27 @@
+# File: requirements.txt
+# Path: /autocalbridge/requirements.txt
+# Purpose: Lists all required Python packages for AutoCalBridge
+
+# Core communication library
+pyvisa>=1.13.0
+
+# Pure Python VISA backend (no external driver required)
+pyvisa-py>=0.7.0
+
+# Serial communication (fallback for direct UART)
+pyserial>=3.5
+
+# GUI and visualization
+matplotlib>=3.7.0
+
+# Numerical processing
+numpy>=1.24.0
+
+# Testing framework
+pytest>=7.4.0
+
+# Packaging
+pyinstaller>=6.0.0
+
+# YAML support for instrument emulation
+pyyaml>=6.0

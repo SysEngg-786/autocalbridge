@@ -1,0 +1,61 @@
+# File: config/instruments/rs_smb100a.yaml
+# Path: /autocalbridge/config/instruments/rs_smb100a.yaml
+# Purpose: YAML behavior definition for R&S SMB100A signal generator (source mode).
+
+# ============================================================
+# PROFILE AUTHENTICITY STATUS
+# ============================================================
+# status:
+#   verified_manual           -> exact response/example from official manual
+#   manual_derived            -> derived from manual rules, no exact example
+#   placeholder_unverified    -> project-defined test profile only
+# ============================================================
+profile_status: placeholder_unverified
+
+source_document:
+  title: ""
+  document_number: ""
+  version: ""
+  url: ""
+  section: ""
+
+# NOTE:
+# An authentic R&S SMB100A *IDN? example has been captured from the manual:
+#   R&S SMB100A Remote Control Commands
+#   Operating Manual 1407.0806.32 - 23
+#   Section 6.2
+#   Example: Rohde&Schwarz,SMB,1412.0000K02/000000,03.01.158
+#
+# However, this YAML profile currently uses a synthetic *IDN? string and
+# additional project-defined responses. It must not be presented as genuine
+# R&S SMB100A behavior until the commands are aligned to the official manual
+# or a real instrument query.
+
+# ============================================================
+# INSTRUMENT IDENTITY
+# ============================================================
+vendor: Rohde & Schwarz
+model: "SMB100A"
+mode: source
+idn: "ROHDE&SCHWARZ,SMB100A,R123456,A.02.10"
+source_range: 10.0
+
+# ============================================================
+# COMMAND RESPONSES
+# ============================================================
+# Common commands such as *IDN?, *ESR?, *OPC?, and SYST:ERR? are handled
+# centrally by MockInstrument and security/policy_loader.py. They are not
+# repeated here.
+# ============================================================
+responses:
+  "FREQ:CENT?": "2.4GHz"
+
+# ============================================================
+# WRITE COMMANDS
+# ============================================================
+# Common writes such as *RST and *CLS are handled centrally by
+# MockInstrument and security/policy_loader.py. They are not repeated here.
+# ============================================================
+write_commands:
+  - "INIT:CONT OFF"
+  - "FREQ:CENT"

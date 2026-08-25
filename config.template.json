@@ -1,0 +1,27 @@
+{
+  "source": {
+    "visa_address": "TCPIP0::192.168.1.100::hislip0::INSTR",
+    "vendor": "Keysight",
+    "instrument_model": "34461A",
+    "settle_delay_ms": 100
+  },
+  "dut": {
+    "visa_address": "TCPIP0::192.168.1.101::hislip0::INSTR",
+    "vendor": "Keysight",
+    "instrument_model": "34461A"
+  },
+  "calibration": {
+    "test_points_volts": [1.000, 2.500, 5.000, 10.000],
+    "pass_tolerance_volts": 0.005,
+    "operator_name": "Default_Operator"
+  },
+  "general": {
+    "report_directory": "Reports",
+    "logging_level": "INFO",
+    "connection_mode": "network",
+    "use_sync": true,
+    "sync_method": "opc",
+    "use_error_checking": true,
+    "stop_on_error": true
+  }
+}

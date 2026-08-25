@@ -1,0 +1,61 @@
+# File: config/instruments/keysight_34461a.yaml
+# Path: /autocalbridge/config/instruments/keysight_34461a.yaml
+# Purpose: YAML behavior definition for Keysight 34461A DMM (DUT mode).
+
+# ============================================================
+# PROFILE AUTHENTICITY STATUS
+# ============================================================
+# status:
+#   verified_manual           -> exact response/example from official manual
+#   manual_derived            -> derived from manual rules, no exact example
+#   placeholder_unverified    -> project-defined test profile only
+# ============================================================
+profile_status: placeholder_unverified
+
+source_document:
+  title: ""
+  document_number: ""
+  version: ""
+  url: ""
+  section: ""
+
+# NOTE:
+# This profile is a project-defined Keysight 34461A DUT emulation.
+# It has not yet been validated against an official Keysight 34461A
+# Programming Guide or a real instrument query. Until that reference is
+# attached, this profile remains placeholder_unverified and must not be
+# presented as genuine Keysight behavior.
+
+# ============================================================
+# INSTRUMENT IDENTITY
+# ============================================================
+vendor: Keysight
+model: "34461A"
+mode: dut
+idn: "Keysight TECHNOLOGIES,34461A,MOCK12345,A.02.10"
+default_target: 1.0
+noise: 0.001
+offset: 0.0
+fail_rate: 0.0
+
+# ============================================================
+# COMMAND RESPONSES
+# ============================================================
+# Common commands such as *IDN?, *ESR?, *OPC?, and SYST:ERR? are handled
+# centrally by MockInstrument and security/policy_loader.py. They are not
+# repeated here.
+# ============================================================
+responses:
+  "READ?": null  # Dynamic — generated based on target
+  "CONF:VOLT:DC": ""
+  "SENS:VOLT:DC:NPLC 1": ""
+
+# ============================================================
+# WRITE COMMANDS
+# ============================================================
+# Common writes such as *RST and *CLS are handled centrally by
+# MockInstrument and security/policy_loader.py. They are not repeated here.
+# ============================================================
+write_commands:
+  - "CONF:VOLT:DC"
+  - "SENS:VOLT:DC:NPLC 1"
