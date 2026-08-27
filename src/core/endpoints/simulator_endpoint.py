@@ -1,6 +1,8 @@
 # File: src/core/endpoints/simulator_endpoint.py
 # Path: /d/Projects/autocalbridge/src/core/endpoints/simulator_endpoint.py
 # Purpose: InstrumentEndpoint adapter for AutoCalBridge simulator instruments.
+#          Includes structured operational and audit logging with session
+#          context automatically attached when active.
 
 """
 Simulator endpoint adapter.
@@ -32,6 +34,10 @@ instrument abstraction boundary:
 An optional CommandPolicy can be supplied by the endpoint factory. If present,
 every write and query command must pass policy validation before it reaches
 the simulator.
+
+Every write and query is logged through the structured logging system.
+Session context is attached automatically by the logging formatter when a
+session context is active.
 """
 
 from typing import Any, Optional
@@ -42,6 +48,9 @@ from .instrument_endpoint import InstrumentEndpoint, InstrumentEndpointError
 # at the endpoint boundary. The policy object is optional; when omitted, the
 # endpoint behaves exactly as before.
 from security.command_policy import CommandPolicy
+
+# Structured loggers for audit and operational events.
+from src.utils.structured_logger import get_operational_logger, get_audit_logger
 
 
 class SimulatorEndpoint(InstrumentEndpoint):
@@ -78,6 +87,9 @@ class SimulatorEndpoint(InstrumentEndpoint):
         self._resource_string: Optional[str] = None
         self._timeout_ms: int = 5000
 
+        self._operational_logger = get_operational_logger()
+        self._audit_logger = get_audit_logger()
+
     # ------------------------------------------------------------------
     # Endpoint contract
     # ------------------------------------------------------------------
@@ -110,6 +122,14 @@ class SimulatorEndpoint(InstrumentEndpoint):
         self._resource_string = resource_string
         self._timeout_ms = timeout_ms
 
+        self._operational_logger.info(
+            "Simulator endpoint opened",
+            extra={
+                "event_type": "simulator_open_success",
+                "resource_string": resource_string,
+            },
+        )
+
     def write(self, command: str) -> None:
         """
         Send a setting or event command to the simulator.
@@ -127,9 +147,27 @@ class SimulatorEndpoint(InstrumentEndpoint):
         self._ensure_ready()
         self._validate_command(command)
 
+        self._audit_logger.info(
+            "Simulator write",
+            extra={
+                "event_type": "command_write",
+                "command": command,
+                "resource_string": self._resource_string,
+            },
+        )
+
         try:
             self._simulator.write(command)
         except Exception as exc:
+            self._audit_logger.error(
+                "Simulator write failed",
+                extra={
+                    "event_type": "command_write_failed",
+                    "command": command,
+                    "resource_string": self._resource_string,
+                    "error": str(exc),
+                },
+            )
             raise InstrumentEndpointError(
                 f"Simulator write failed for command: {command!r}",
                 endpoint_type="simulator",
@@ -157,9 +195,27 @@ class SimulatorEndpoint(InstrumentEndpoint):
         self._ensure_ready()
         self._validate_command(command)
 
+        self._audit_logger.info(
+            "Simulator query",
+            extra={
+                "event_type": "command_query",
+                "command": command,
+                "resource_string": self._resource_string,
+            },
+        )
+
         try:
             response = self._simulator.query(command)
         except Exception as exc:
+            self._audit_logger.error(
+                "Simulator query failed",
+                extra={
+                    "event_type": "command_query_failed",
+                    "command": command,
+                    "resource_string": self._resource_string,
+                    "error": str(exc),
+                },
+            )
             raise InstrumentEndpointError(
                 f"Simulator query failed for command: {command!r}",
                 endpoint_type="simulator",
@@ -170,8 +226,21 @@ class SimulatorEndpoint(InstrumentEndpoint):
         # A simulator query should return a string. If it does not, preserve the
         # boundary by converting to a string rather than leaking the type.
         if response is None:
-            return ""
-        return str(response)
+            response_text = ""
+        else:
+            response_text = str(response)
+
+        self._audit_logger.info(
+            "Simulator query response",
+            extra={
+                "event_type": "command_response",
+                "command": command,
+                "response": response_text,
+                "resource_string": self._resource_string,
+            },
+        )
+
+        return response_text
 
     def close(self) -> None:
         """
@@ -187,6 +256,14 @@ class SimulatorEndpoint(InstrumentEndpoint):
         if simulator is None:
             return
 
+        self._operational_logger.info(
+            "Closing simulator endpoint",
+            extra={
+                "event_type": "simulator_close",
+                "resource_string": self._resource_string,
+            },
+        )
+
         close_method = getattr(simulator, "close", None)
         if close_method is None:
             return
@@ -197,6 +274,14 @@ class SimulatorEndpoint(InstrumentEndpoint):
             # close() is intentionally idempotent and must not raise. The
             # original error is converted to InstrumentEndpointError only for
             # internal logging if needed; it is not re-raised here.
+            self._operational_logger.error(
+                "Simulator close failed",
+                extra={
+                    "event_type": "simulator_close_failed",
+                    "resource_string": self._resource_string,
+                    "error": str(exc),
+                },
+            )
             raise InstrumentEndpointError(
                 "Simulator close failed.",
                 endpoint_type="simulator",

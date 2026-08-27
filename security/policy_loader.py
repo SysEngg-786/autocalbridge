@@ -24,6 +24,10 @@ Allowed write roots are taken from:
 The central common-command sets remove the need to repeat common commands in
 every instrument profile. This avoids drift between profile files and keeps
 policy knowledge in one place.
+
+Note: This common-command data is currently embedded here. A future refactor
+will externalize it into a single controlled command data file so adding or
+removing common commands does not require editing this loader.
 """
 
 import os
@@ -45,7 +49,12 @@ COMMON_ALLOWED_QUERIES = {
     "*IDN?",
     "*ESR?",
     "*OPC?",
+    "*STB?",
+    "*OPT?",
     "SYST:ERR?",
+    "SYST:ERR:ALL?",
+    "STAT:OPER:EVEN?",
+    "STAT:QUES:EVEN?",
 }
 
 COMMON_ALLOWED_WRITES = {

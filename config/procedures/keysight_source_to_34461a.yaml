@@ -1,0 +1,16 @@
+# File: config/procedures/keysight_source_to_34461a.yaml
+# Path: /d/Projects/autocalbridge/config/procedures/keysight_source_to_34461a.yaml
+# Purpose: Minimal Phase 3 procedure for virtual Keysight source to 34461A DMM.
+
+procedure_id: keysight_source_to_34461a
+label: Keysight source to 34461A DC voltage check
+source_command_template: "SOUR:VOLT {value}"
+dut_query_command: "READ?"
+points:
+  - 1.0
+  - 2.5
+  - 5.0
+  - 10.0
+tolerance: 0.005
+metadata:
+  purpose: Phase 3 minimal procedure abstraction verification

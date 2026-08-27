@@ -134,3 +134,5 @@ project-tree.txt
 # requirements.txt  <- KEEP — shows dependencies
 # setup.py          <- KEEP — shows packaging
 # pyproject.toml    <- KEEP — shows project metadata
+# Deployment registry - local instance data
+config/instruments_registry.yaml

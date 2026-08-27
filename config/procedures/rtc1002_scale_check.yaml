@@ -1,0 +1,14 @@
+# File: config/procedures/rtc1002_scale_check.yaml
+# Path: /d/Projects/autocalbridge/config/procedures/rtc1002_scale_check.yaml
+# Purpose: Safe physical RTC1002 DUT path verification through session and
+#          procedure runner. Queries channel scale, no write to RTC1002.
+
+procedure_id: rtc1002_scale_check
+label: RTC1002 physical scale check
+source_command_template: "SOUR:VOLT {value}"
+dut_query_command: "CHAN1:SCAL?"
+points:
+  - 0.005
+tolerance: 0.1
+metadata:
+  purpose: Phase 3 physical DUT path verification

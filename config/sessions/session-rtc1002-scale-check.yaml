@@ -1,0 +1,14 @@
+# File: config/sessions/session-rtc1002-scale-check.yaml
+# Path: /d/Projects/autocalbridge/config/sessions/session-rtc1002-scale-check.yaml
+# Purpose: Physical RTC1002 path verification through session + procedure runner.
+
+session_id: session-rtc1002-scale-check
+label: RTC1002 physical scale check
+operator: Demo_Operator
+supervisor: Lab_Supervisor
+source_id: keysight_source
+dut_id: rtc1002-lab1
+procedure: rtc1002_scale_check
+metadata:
+  site: Lab A
+  purpose: Phase 3 physical DUT path verification

@@ -1,0 +1,54 @@
+# File: config/instruments/rs_rtc1002.yaml
+# Path: /d/Projects/autocalbridge/config/instruments/rs_rtc1002.yaml
+# Purpose: Capability profile for R&S RTC1002 oscilloscope.
+#          Contains identity and basic SCPI commands for initial connectivity
+#          and basic control. Does NOT fix deployment role; role is assigned
+#          at runtime by the session/test configuration.
+
+# ============================================================
+# PROFILE AUTHENTICITY STATUS
+# ============================================================
+# status:
+#   verified_manual           -> exact response/example from official manual
+#   manual_derived            -> derived from manual rules, no exact example
+#   placeholder_unverified    -> project-defined test profile only
+# ============================================================
+profile_status: placeholder_unverified
+
+source_document:
+  title: "R&S RTC1000 Series User Manual"
+  document_number: ""
+  version: ""
+  url: ""
+  section: ""
+
+# ============================================================
+# INSTRUMENT IDENTITY
+# ============================================================
+vendor: Rohde & Schwarz
+model: "RTC1002"
+idn: "Rohde&Schwarz,RTC1002,0000000000000,00.000"
+
+# ============================================================
+# COMMAND RESPONSES
+# ============================================================
+# Common commands such as *IDN?, *ESR?, *OPC?, and SYST:ERR? are handled
+# centrally by MockInstrument and security/policy_loader.py. They are not
+# repeated here.
+# ============================================================
+responses:
+  "SYST:ERR:ALL?": "0,\"No error\""
+  "CHAN1:SCAL?": "5.00E-03"
+
+# ============================================================
+# WRITE COMMANDS
+# ============================================================
+# Common writes such as *RST and *CLS are handled centrally by
+# MockInstrument and security/policy_loader.py. They are not repeated here.
+# ============================================================
+write_commands:
+  - "ACQ:STAT"
+  - "CHAN1:STAT"
+  - "CHAN1:SCAL"
+  - "TIM:SCAL"
+  - "TIM:POS"

@@ -1,106 +1,63 @@
 # File: scripts/demo.py
-# Path: /autocalbridge/scripts/demo.py
-# Purpose: Demo script showing two-ended calibration with synchronization and
-#          error handling through the implicit endpoint path.
+# Path: /d/Projects/autocalbridge/scripts/demo.py
+# Purpose: Demo script showing session-driven, procedure-driven two-ended
+#          calibration. No hardcoded endpoints, points, or tolerance.
 
 import sys
 import os
 
-# Add the src directory to Python path
+# Add the project root to Python path.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.core.test_engine import TestEngine
+from src.core.session_runner import run_session, SessionRunnerError
 from src.core.report_generator import ReportGenerator
 from src.utils.logger import setup_logging
 
 
 def main():
-    """Run the two-ended calibration demo using sim:// endpoints."""
+    """Run the two-ended calibration demo from a session file."""
     print("\n" + "=" * 60)
-    print("AutoCalBridge Demo - Two-Ended Calibration with Sync & Error Handling")
+    print("AutoCalBridge Demo - Session + Procedure-Driven Calibration")
     print("=" * 60)
 
-    # Setup logging
-    setup_logging("INFO")
+    # Setup logging using the current logger utility.
+    setup_logging()
 
-    # Create test engine
-    print("\n[1] Initializing test engine...")
-    engine = TestEngine()
+    # The session file is the single input that defines:
+    # - operator/supervisor
+    # - source and DUT instruments by registry ID
+    # - procedure reference
+    # The procedure file defines points, tolerance, source command template,
+    # and DUT query command. No hardcoded run data remains here.
+    session_file = "config/sessions/session-keysight-virtual.yaml"
 
-    # Configure synchronization
-    engine.set_sync_config(
-        enabled=True,
-        method="opc",  # "opc", "wai", or "delay"
-        delay_ms=100
-    )
-    print(f"    Sync enabled: True")
-    print(f"    Sync method: opc")
+    print(f"\n[1] Session file: {session_file}")
 
-    # Configure error handling
-    engine.set_error_config(
-        enabled=True,
-        stop_on_error=True
-    )
-    print(f"    Error checking enabled: True")
-    print(f"    Stop on error: True")
-
-    # Connect to simulator endpoints using implicit resource strings.
-    # ACB does not need to know whether these are simulators or physical VISA
-    # instruments. The endpoint factory interprets the resource strings.
-    print("\n[2] Connecting source and DUT endpoints...")
-    source_connected = engine.connect_source("sim://keysight_source")
-    dut_connected = engine.connect_dut("sim://keysight_34461a")
-
-    if not source_connected:
-        print("    Source connection failed.")
-        return 1
-    if not dut_connected:
-        print("    DUT connection failed.")
+    print("\n[2] Running session + procedure-driven calibration...")
+    try:
+        results, errors = run_session(session_file)
+    except SessionRunnerError as exc:
+        print(f"    Session run failed: {exc}")
         return 1
 
-    # Query identities through the endpoint seam
-    source_idn = engine.query_source_identity()
-    dut_idn = engine.query_dut_identity()
-    print(f"    Source connected: {source_idn}")
-    print(f"    DUT connected: {dut_idn}")
+    print(f"\n[3] Test completed: {len(results)} measurements")
 
-    # Define test points
-    test_points = [1.0, 2.5, 5.0, 10.0]
-    tolerance = 0.005
-    operator = "Demo_Operator"
-
-    print(f"\n[3] Running two-ended calibration sequence...")
-    print(f"    Test Points: {test_points} V")
-    print(f"    Tolerance: {tolerance} V")
-    print(f"    Operator: {operator}")
-
-    # Run test
-    results = engine.run_calibration_sequence(test_points, tolerance, operator)
-    print(f"\n[4] Test completed: {len(results)} measurements")
-
-    # Check for errors
-    errors = engine.get_errors()
     if errors:
         print(f"\n[!] Errors encountered: {len(errors)}")
         for err in errors:
             print(f"    {err['instrument']}: {err['message']}")
 
-    # Generate report
-    print("\n[5] Generating report...")
+    print("\n[4] Generating report...")
     report_generator = ReportGenerator()
     report_path = report_generator.generate_report(results, prefix="Demo")
     print(f"    Report saved to: {report_path}")
 
-    # Show summary
     summary = report_generator.generate_summary(results)
-    print(f"\n[6] Summary:")
+    print(f"\n[5] Summary:")
     print(f"    Total Tests: {summary['total']}")
     print(f"    Passed: {summary['passed']}")
     print(f"    Failed: {summary['failed']}")
     print(f"    Pass Rate: {summary['pass_rate']}%")
-
-    # Cleanup
-    engine.close()
 
     print("\n" + "=" * 60)
     print("Demo completed successfully!")

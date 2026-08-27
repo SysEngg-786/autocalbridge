@@ -1,0 +1,14 @@
+# File: config/sessions/session-20260827-001.yaml
+# Path: /d/Projects/autocalbridge/config/sessions/session-20260827-001.yaml
+# Purpose: Sample session file for Phase 1 session loader/validator testing.
+
+session_id: session-20260827-001
+label: RTC1002 Phase 1 virtual verification
+operator: Demo_Operator
+supervisor: Lab_Supervisor
+source_id: rtc1002-sim
+dut_id: rtc1002-sim-dut
+procedure: ""            # reserved for Phase 3; ignored in Phase 1
+metadata:
+  site: Local Dev
+  purpose: Phase 1 virtual verification

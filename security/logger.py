@@ -1,6 +1,7 @@
 # File: security/logger.py
 # Path: /d/Projects/autocalbridge/security/logger.py
-# Purpose: Security audit logging helper for AutoCalBridge.
+# Purpose: Security audit logging wrapper for AutoCalBridge.
+#          Uses the structured security logger and session context.
 
 """
 Security audit logger.
@@ -15,6 +16,8 @@ Design rules:
 - No sensitive operational values are hardcoded here.
 - Internal stack traces may be logged to file, but they must never be sent
   to an instrument client.
+- The actual log destination and format are controlled by
+  src.utils.structured_logger.
 
 Use in endpoints and security modules as:
 
@@ -22,15 +25,16 @@ Use in endpoints and security modules as:
     audit.command_rejected("READ?")
 """
 
-import logging
+from src.utils.structured_logger import get_security_logger
 
 
 class SecurityAuditLogger:
     """
-    Wrapper around Python logging for security audit events.
+    Wrapper around the structured security logger.
 
     The wrapper standardises security event formatting and applies externally
-    supplied redaction fields.
+    supplied redaction fields. All events are written as JSON Lines to the
+    security log directory.
     """
 
     def __init__(self, logger_name="acb.security", redact_fields=None):
@@ -38,11 +42,13 @@ class SecurityAuditLogger:
         Initialise the security audit logger.
 
         Args:
-            logger_name: Python logger name.
+            logger_name: Kept for backward compatibility. The structured
+                security logger is always used regardless of this value.
             redact_fields: Optional iterable of field names whose values must
                 be redacted in log output.
         """
-        self._logger = logging.getLogger(logger_name)
+        # The structured security logger is the single destination.
+        self._logger = get_security_logger()
         self._redact_fields = set(redact_fields or set())
 
     # ------------------------------------------------------------------
@@ -53,7 +59,7 @@ class SecurityAuditLogger:
         """
         Log one security event.
 
-        The event type and supplied fields are rendered in a stable format.
+        The event type and supplied fields are rendered in JSON Lines.
         Any field whose name is present in redact_fields is rendered as
         `***` instead of its actual value.
 
@@ -62,19 +68,18 @@ class SecurityAuditLogger:
             message: Human-readable event message.
             **fields: Additional key/value context.
         """
-        rendered_fields = []
-
+        safe_fields = {}
         for key, value in fields.items():
             if key in self._redact_fields:
-                rendered_fields.append(f"{key}=***")
+                safe_fields[key] = "***"
             else:
-                rendered_fields.append(f"{key}={value}")
+                safe_fields[key] = value
 
-        prefix = f"security_event={event_type} message={message}"
-        if rendered_fields:
-            prefix = prefix + " " + " ".join(rendered_fields)
+        # Extra is used so JsonLineFormatter picks up the structured fields.
+        extra = {"event_type": event_type}
+        extra.update(safe_fields)
 
-        self._logger.warning(prefix)
+        self._logger.warning(message, extra=extra)
 
     # ------------------------------------------------------------------
     # Convenience wrappers

@@ -1,17 +1,27 @@
 # File: src/core/test_engine.py
-# Path: /autocalbridge/src/core/test_engine.py
+# Path: /d/Projects/autocalbridge/src/core/test_engine.py
 # Purpose: Execute test sequences with two-ended support, synchronization, and
-#          error handling.
+#          error handling. Uses structured operational, audit, and security
+#          loggers so calibration execution is traceable with session context.
+#          Procedure-based execution returns canonical TestResult objects.
 
 import time
-import logging
 from datetime import datetime
+from typing import Optional, Dict, Any, List
 
 from src.core.visa_manager import VisaManager
 from src.core.endpoints.instrument_endpoint import InstrumentEndpointError
 from src.core.endpoints.endpoint_factory import create_from_resource_string
+from src.core.procedure_config import ProcedureConfig
+from src.models.test_result import TestResult
+from security.command_policy import CommandPolicy
 
-logger = logging.getLogger(__name__)
+# Structured loggers.
+from src.utils.structured_logger import (
+    get_operational_logger,
+    get_audit_logger,
+    get_security_logger,
+)
 
 
 class TestEngine:
@@ -21,8 +31,15 @@ class TestEngine:
     Source and DUT are treated as two independent instrument endpoints.
 
     Connection is performed through connect_source() and connect_dut(), which
-    create endpoints from implicit resource strings. ACB does not branch on
-    simulator vs physical instrument type.
+    create endpoints from implicit resource strings and optional command
+    policies. ACB does not branch on simulator vs physical instrument type.
+
+    Calibration execution events are written to structured audit logs.
+    Errors and lifecycle events go to operational logs. Safety violations
+    go to the security log.
+
+    Procedure-based execution returns TestResult objects for canonical
+    traceability and report generation.
     """
 
     def __init__(self, visa_manager=None):
@@ -35,103 +52,173 @@ class TestEngine:
         self.visa_manager = visa_manager if visa_manager else VisaManager()
         self.source = None  # Reference standard endpoint
         self.dut = None     # Unit under test endpoint
-        self.results = []
+        self.results: List[TestResult] = []
         self._sync_enabled = True
         self._sync_method = "opc"  # "opc", "wai", or "delay"
         self._settle_delay_ms = 100
         self._error_checking_enabled = True
         self._stop_on_error = True
         self._errors = []  # Track errors encountered
+        self._source_safety_limits = {}  # command root -> {"min":..., "max":...}
+
+        self._operational_logger = get_operational_logger()
+        self._audit_logger = get_audit_logger()
+        self._security_logger = get_security_logger()
 
     # ========================================================================
     # Configuration
     # ========================================================================
 
     def set_sync_config(self, enabled=True, method="opc", delay_ms=100):
-        """Configure synchronization settings.
-
-        Args:
-            enabled: Enable synchronization
-            method: "opc" (*OPC?), "wai" (*WAI), or "delay" (fixed delay)
-            delay_ms: Fallback delay in milliseconds (used with "delay" method)
-        """
+        """Configure synchronization settings."""
         self._sync_enabled = enabled
         self._sync_method = method
         self._settle_delay_ms = delay_ms
-        logger.info(f"Sync config: enabled={enabled}, method={method}, delay={delay_ms}ms")
+        self._operational_logger.info(
+            "Sync config updated",
+            extra={
+                "event_type": "sync_config",
+                "enabled": enabled,
+                "method": method,
+                "delay_ms": delay_ms,
+            },
+        )
 
     def set_error_config(self, enabled=True, stop_on_error=True):
-        """Configure error handling settings.
-
-        Args:
-            enabled: Enable error checking
-            stop_on_error: Stop calibration on error
-        """
+        """Configure error handling settings."""
         self._error_checking_enabled = enabled
         self._stop_on_error = stop_on_error
-        logger.info(f"Error config: enabled={enabled}, stop_on_error={stop_on_error}")
+        self._operational_logger.info(
+            "Error config updated",
+            extra={
+                "event_type": "error_config",
+                "enabled": enabled,
+                "stop_on_error": stop_on_error,
+            },
+        )
+
+    def set_source_safety_limits(self, limits: Dict[str, Dict[str, float]]):
+        """Set safety limits for the source instrument.
+
+        Args:
+            limits: Mapping of command root to {"min": float, "max": float}.
+                Example:
+                    {
+                        "SOUR:VOLT": {"min": -10.0, "max": 10.0},
+                        "SOUR:CURR": {"min": 0.0, "max": 1.0}
+                    }
+        """
+        self._source_safety_limits = limits or {}
+        self._operational_logger.info(
+            "Source safety limits set",
+            extra={
+                "event_type": "safety_limits_set",
+                "limits": self._source_safety_limits,
+            },
+        )
 
     # ========================================================================
     # Connection Management
     # ========================================================================
 
-    def connect_source(self, address, timeout=5000):
+    def connect_source(self, address, timeout=5000, command_policy=None):
         """
         Connect to the source endpoint using an implicit resource string.
 
-        Supported forms:
-            sim://<profile_name>
-            TCPIP0::192.168.1.50::inst0::INSTR
-            USB0::0x0957::0x1507::MY12345678::INSTR
-            GPIB0::1::INSTR
-            ASRL1::INSTR
-
         Args:
             address: Implicit endpoint resource string.
             timeout: Timeout in milliseconds.
+            command_policy: Optional CommandPolicy for physical endpoints.
 
         Returns:
             bool: True if connected, False on failure.
         """
         try:
-            endpoint = create_from_resource_string(address, self.visa_manager)
+            endpoint = create_from_resource_string(
+                address,
+                self.visa_manager,
+                command_policy=command_policy,
+            )
             endpoint.open(address, timeout)
         except InstrumentEndpointError as exc:
-            logger.error(f"Failed to connect source at {address}: {exc}")
+            self._operational_logger.error(
+                "Source connection failed",
+                extra={
+                    "event_type": "source_connect_failed",
+                    "address": address,
+                    "error": str(exc),
+                },
+            )
             return False
         except Exception as exc:
-            logger.error(f"Unexpected source connection failure at {address}: {exc}")
+            self._operational_logger.error(
+                "Unexpected source connection failure",
+                extra={
+                    "event_type": "source_connect_failed",
+                    "address": address,
+                    "error": str(exc),
+                },
+            )
             return False
 
         self.source = endpoint
-        logger.info(f"Source connected at {address}")
+        self._operational_logger.info(
+            "Source connected",
+            extra={
+                "event_type": "source_connected",
+                "address": address,
+            },
+        )
         return True
 
-    def connect_dut(self, address, timeout=5000):
+    def connect_dut(self, address, timeout=5000, command_policy=None):
         """
         Connect to the DUT endpoint using an implicit resource string.
-
-        Supported forms are the same as connect_source().
 
         Args:
             address: Implicit endpoint resource string.
             timeout: Timeout in milliseconds.
+            command_policy: Optional CommandPolicy for physical endpoints.
 
         Returns:
             bool: True if connected, False on failure.
         """
         try:
-            endpoint = create_from_resource_string(address, self.visa_manager)
+            endpoint = create_from_resource_string(
+                address,
+                self.visa_manager,
+                command_policy=command_policy,
+            )
             endpoint.open(address, timeout)
         except InstrumentEndpointError as exc:
-            logger.error(f"Failed to connect DUT at {address}: {exc}")
+            self._operational_logger.error(
+                "DUT connection failed",
+                extra={
+                    "event_type": "dut_connect_failed",
+                    "address": address,
+                    "error": str(exc),
+                },
+            )
             return False
         except Exception as exc:
-            logger.error(f"Unexpected DUT connection failure at {address}: {exc}")
+            self._operational_logger.error(
+                "Unexpected DUT connection failure",
+                extra={
+                    "event_type": "dut_connect_failed",
+                    "address": address,
+                    "error": str(exc),
+                },
+            )
             return False
 
         self.dut = endpoint
-        logger.info(f"DUT connected at {address}")
+        self._operational_logger.info(
+            "DUT connected",
+            extra={
+                "event_type": "dut_connected",
+                "address": address,
+            },
+        )
         return True
 
     # ========================================================================
@@ -144,9 +231,15 @@ class TestEngine:
             try:
                 self.source.close()
             except Exception as exc:
-                logger.warning(f"Error closing source: {exc}")
+                self._operational_logger.warning(
+                    "Error closing source",
+                    extra={"event_type": "source_close_failed", "error": str(exc)},
+                )
         self.source = None
-        logger.info("Source disconnected")
+        self._operational_logger.info(
+            "Source disconnected",
+            extra={"event_type": "source_disconnected"},
+        )
 
     def disconnect_dut(self):
         """Disconnect and release the DUT endpoint."""
@@ -154,9 +247,15 @@ class TestEngine:
             try:
                 self.dut.close()
             except Exception as exc:
-                logger.warning(f"Error closing DUT: {exc}")
+                self._operational_logger.warning(
+                    "Error closing DUT",
+                    extra={"event_type": "dut_close_failed", "error": str(exc)},
+                )
         self.dut = None
-        logger.info("DUT disconnected")
+        self._operational_logger.info(
+            "DUT disconnected",
+            extra={"event_type": "dut_disconnected"},
+        )
 
     def disconnect_all(self):
         """Disconnect all instrument endpoints."""
@@ -168,24 +267,33 @@ class TestEngine:
     # ========================================================================
 
     def query_identity(self, instrument, name="Instrument"):
-        """Query instrument identity.
-
-        Args:
-            instrument: An InstrumentEndpoint-compatible object.
-            name: Human-readable instrument name.
-
-        Returns:
-            str or None: Identity response string, or None on failure.
-        """
+        """Query instrument identity."""
         if not instrument:
-            logger.error(f"{name} not connected")
+            self._operational_logger.error(
+                f"{name} not connected",
+                extra={"event_type": "identity_failed", "instrument_name": name},
+            )
             return None
         try:
             idn = instrument.query("*IDN?").strip()
-            logger.info(f"{name} identity: {idn}")
+            self._operational_logger.info(
+                f"{name} identity queried",
+                extra={
+                    "event_type": "identity_queried",
+                    "instrument_name": name,
+                    "identity": idn,
+                },
+            )
             return idn
         except Exception as exc:
-            logger.error(f"{name} identity query failed: {exc}")
+            self._operational_logger.error(
+                f"{name} identity query failed",
+                extra={
+                    "event_type": "identity_failed",
+                    "instrument_name": name,
+                    "error": str(exc),
+                },
+            )
             return None
 
     def query_source_identity(self):
@@ -201,34 +309,40 @@ class TestEngine:
     # ========================================================================
 
     def wait_for_settle(self, instrument):
-        """Wait for instrument to settle after a command.
-
-        Uses the configured synchronization method:
-        - "opc": Uses *OPC? to query operation complete
-        - "wai": Uses *WAI to block until complete
-        - "delay": Uses a fixed time delay
-
-        Args:
-            instrument: Source or DUT endpoint.
-        """
+        """Wait for instrument to settle after a command."""
         if not self._sync_enabled:
-            logger.debug("Sync disabled — using fixed delay")
+            self._operational_logger.debug(
+                "Sync disabled - using fixed delay",
+                extra={"event_type": "sync_fallback"},
+            )
             time.sleep(self._settle_delay_ms / 1000.0)
             return
 
         try:
             if self._sync_method == "opc":
                 result = instrument.query("*OPC?")
-                logger.debug(f"*OPC? returned: {result.strip()}")
+                self._operational_logger.debug(
+                    f"*OPC? returned: {result.strip()}",
+                    extra={"event_type": "sync_opc"},
+                )
             elif self._sync_method == "wai":
                 instrument.write("*WAI")
                 time.sleep(0.01)
-                logger.debug("*WAI executed")
+                self._operational_logger.debug(
+                    "*WAI executed",
+                    extra={"event_type": "sync_wai"},
+                )
             else:
-                logger.debug(f"Using fallback delay: {self._settle_delay_ms}ms")
+                self._operational_logger.debug(
+                    f"Using fallback delay: {self._settle_delay_ms}ms",
+                    extra={"event_type": "sync_fallback"},
+                )
                 time.sleep(self._settle_delay_ms / 1000.0)
         except Exception as exc:
-            logger.warning(f"Sync failed: {exc}. Using fallback delay.")
+            self._operational_logger.warning(
+                f"Sync failed: {exc}. Using fallback delay.",
+                extra={"event_type": "sync_failed", "error": str(exc)},
+            )
             time.sleep(self._settle_delay_ms / 1000.0)
 
     # ========================================================================
@@ -238,7 +352,10 @@ class TestEngine:
     def check_errors(self, instrument, name="Instrument"):
         """Check instrument error queue.
 
-        Queries *ESR? and SYST:ERR? through the instrument endpoint.
+        Queries SYST:ERR? as the authoritative error indicator.
+        ESR is queried for diagnostic context but does not trigger
+        a failure on its own, because power-on or event bits may be set
+        without an actual command error.
 
         Returns:
             bool: True if no errors, False if errors detected.
@@ -247,28 +364,50 @@ class TestEngine:
             return True
 
         try:
+            error_response = instrument.query("SYST:ERR?")
+            error_message = error_response.strip()
+
+            if error_message.startswith("0,"):
+                return True
+
             esr = instrument.query("*ESR?")
             esr_value = int(esr.strip())
 
-            if esr_value != 0:
-                error_response = instrument.query("SYST:ERR?")
-                error_message = error_response.strip()
-                self._errors.append({
-                    "instrument": name,
-                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            self._errors.append({
+                "instrument": name,
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "esr": esr_value,
+                "message": error_message
+            })
+
+            self._operational_logger.error(
+                f"{name} error detected",
+                extra={
+                    "event_type": "instrument_error",
+                    "instrument_name": name,
                     "esr": esr_value,
-                    "message": error_message
-                })
-                logger.error(f"{name} error: ESR={esr_value}, {error_message}")
+                    "error_message": error_message,
+                },
+            )
 
-                if self._stop_on_error:
-                    logger.critical(f"Stopping due to error on {name}")
-                    return False
+            if self._stop_on_error:
+                self._operational_logger.critical(
+                    f"Stopping due to error on {name}",
+                    extra={"event_type": "stop_on_error", "instrument_name": name},
+                )
+                return False
 
-            return esr_value == 0
+            return False
 
         except Exception as exc:
-            logger.warning(f"Error checking failed on {name}: {exc}")
+            self._operational_logger.warning(
+                f"Error checking failed on {name}: {exc}",
+                extra={
+                    "event_type": "error_check_failed",
+                    "instrument_name": name,
+                    "error": str(exc),
+                },
+            )
             return True
 
     def get_errors(self):
@@ -293,14 +432,24 @@ class TestEngine:
             bool: True if successful.
         """
         if not self.source:
-            logger.error("Source not connected")
+            self._operational_logger.error(
+                "Source not connected",
+                extra={"event_type": "source_not_connected"},
+            )
             return False
         try:
-            self.source.write(f"SOUR:VOLT {value}")
-            logger.debug(f"Source set to {value} V")
+            command = f"SOUR:VOLT {value}"
+            self.source.write(command)
+            self._operational_logger.debug(
+                f"Source set to {value} V",
+                extra={"event_type": "source_set", "command": command, "value": value},
+            )
             return True
         except Exception as exc:
-            logger.error(f"Source set failed: {exc}")
+            self._operational_logger.error(
+                f"Source set failed: {exc}",
+                extra={"event_type": "source_set_failed", "error": str(exc)},
+            )
             return False
 
     def measure_dut(self):
@@ -310,76 +459,86 @@ class TestEngine:
             float: Measured value, or None on failure.
         """
         if not self.dut:
-            logger.error("DUT not connected")
+            self._operational_logger.error(
+                "DUT not connected",
+                extra={"event_type": "dut_not_connected"},
+            )
             return None
         try:
             raw = self.dut.query("READ?")
             value = float(raw)
-            logger.debug(f"DUT measured: {value:.4f} V")
+            self._operational_logger.debug(
+                f"DUT measured: {value:.4f} V",
+                extra={"event_type": "dut_measured", "value": value},
+            )
             return value
         except Exception as exc:
-            logger.error(f"DUT measurement failed: {exc}")
+            self._operational_logger.error(
+                f"DUT measurement failed: {exc}",
+                extra={"event_type": "dut_measure_failed", "error": str(exc)},
+            )
             return None
 
     # ========================================================================
-    # Calibration Sequence
+    # Legacy Calibration Sequence
     # ========================================================================
 
     def run_calibration_sequence(self, test_points, tolerance, operator_name="Default"):
-        """Run a calibration sequence with two-ended (source + DUT) control.
+        """Run a legacy hardcoded calibration sequence.
 
-        Args:
-            test_points: List of target values.
-            tolerance: PASS/FAIL tolerance.
-            operator_name: Operator identifier for logs.
-
-        Returns:
-            list: Test results.
+        This method remains for backward compatibility during Phase 3
+        transition. New execution should use run_procedure().
         """
         if not self.source:
-            logger.error("Source not connected")
+            self._operational_logger.error(
+                "Source not connected",
+                extra={"event_type": "source_not_connected"},
+            )
             return []
         if not self.dut:
-            logger.error("DUT not connected")
+            self._operational_logger.error(
+                "DUT not connected",
+                extra={"event_type": "dut_not_connected"},
+            )
             return []
 
         self.results = []
         self._errors = []
-        logger.info(f"Starting calibration sequence for {len(test_points)} points")
-        logger.info(f"Tolerance: {tolerance} V")
-        logger.info(f"Sync: enabled={self._sync_enabled}, method={self._sync_method}")
-        logger.info(f"Error checking: enabled={self._error_checking_enabled}, stop_on_error={self._stop_on_error}")
+        self._operational_logger.info(
+            f"Starting legacy calibration sequence for {len(test_points)} points",
+            extra={
+                "event_type": "calibration_start",
+                "operator": operator_name,
+                "tolerance": tolerance,
+                "point_count": len(test_points),
+            },
+        )
 
         for target in test_points:
-            logger.info(f"Testing {target:.3f} V...")
+            self._operational_logger.info(
+                f"Testing {target} V...",
+                extra={"event_type": "point_start", "target": target},
+            )
 
-            # 1. Set source to target value
             if not self.set_source_value(target):
-                logger.error(f"Failed to set source to {target:.3f} V")
                 continue
 
-            # 2. Wait for settlement
             self.wait_for_settle(self.source)
 
-            # 3. Check source errors
             if not self.check_errors(self.source, "Source"):
                 if self._stop_on_error:
                     break
                 continue
 
-            # 4. Read DUT
             measured = self.measure_dut()
             if measured is None:
-                logger.error(f"Failed to read DUT at {target:.3f} V")
                 continue
 
-            # 5. Check DUT errors
             if not self.check_errors(self.dut, "DUT"):
                 if self._stop_on_error:
                     break
                 continue
 
-            # 6. Compare and determine status
             error = abs(measured - target)
             status = "PASS" if error <= tolerance else "FAIL"
 
@@ -394,17 +553,307 @@ class TestEngine:
             self.results.append(result)
 
             if status == "PASS":
-                logger.info(f"  Measured: {measured:.4f} V | Error: {error:.4f} V -> PASS")
+                self._operational_logger.info(
+                    f"Measured: {measured} | Error: {error} -> PASS",
+                    extra={"event_type": "point_passed", "target": target},
+                )
             else:
-                logger.warning(f"  Measured: {measured:.4f} V | Error: {error:.4f} V -> FAIL")
+                self._operational_logger.warning(
+                    f"Measured: {measured} | Error: {error} -> FAIL",
+                    extra={"event_type": "point_failed", "target": target},
+                )
 
         total = len(self.results)
         passed = sum(1 for r in self.results if r["Status"] == "PASS")
-        logger.info(f"Sequence complete: {passed}/{total} PASSED")
+        self._operational_logger.info(
+            f"Legacy sequence complete: {passed}/{total} PASSED",
+            extra={"event_type": "calibration_complete", "passed": passed, "total": total},
+        )
         if self._errors:
-            logger.warning(f"Errors encountered: {len(self._errors)}")
+            self._operational_logger.warning(
+                f"Errors encountered: {len(self._errors)}",
+                extra={"event_type": "calibration_errors", "error_count": len(self._errors)},
+            )
 
         return self.results
+
+    # ========================================================================
+    # Procedure-Based Calibration Sequence
+    # ========================================================================
+
+    def run_procedure(
+        self,
+        procedure: ProcedureConfig,
+        operator_name="Default",
+        session_id="",
+        supervisor="",
+        source_id="",
+        dut_id="",
+    ):
+        """Run a procedure-defined calibration sequence.
+
+        This method uses the procedure's source command template and DUT
+        query command instead of hardcoded SOUR:VOLT and READ?.
+
+        Safety limits are enforced before source commands are sent.
+
+        Results are returned as canonical TestResult objects.
+
+        Args:
+            procedure: ProcedureConfig object.
+            operator_name: Operator identifier for logs and results.
+            session_id: Session identifier for traceability.
+            supervisor: Supervisor identifier for traceability.
+            source_id: Registry ID of source instrument.
+            dut_id: Registry ID of DUT instrument.
+
+        Returns:
+            list[TestResult]: Canonical result objects.
+        """
+        if not self.source:
+            self._operational_logger.error(
+                "Source not connected",
+                extra={"event_type": "source_not_connected"},
+            )
+            return []
+        if not self.dut:
+            self._operational_logger.error(
+                "DUT not connected",
+                extra={"event_type": "dut_not_connected"},
+            )
+            return []
+
+        self.results = []
+        self._errors = []
+
+        self._audit_logger.info(
+            "Procedure started",
+            extra={
+                "event_type": "procedure_start",
+                "procedure_id": procedure.procedure_id,
+                "operator": operator_name,
+                "point_count": len(procedure.points),
+                "tolerance": procedure.tolerance,
+                "source_command_template": procedure.source_command_template,
+                "dut_query_command": procedure.dut_query_command,
+            },
+        )
+
+        for target in procedure.points:
+            self._audit_logger.info(
+                "Point started",
+                extra={
+                    "event_type": "point_start",
+                    "procedure_id": procedure.procedure_id,
+                    "target": target,
+                },
+            )
+
+            source_command = procedure.source_command_template.format(value=target)
+
+            if not self._check_source_safety(source_command, target):
+                self._security_logger.error(
+                    "Safety limit violation",
+                    extra={
+                        "event_type": "safety_limit_violation",
+                        "procedure_id": procedure.procedure_id,
+                        "command": source_command,
+                        "target": target,
+                    },
+                )
+                self._errors.append({
+                    "instrument": "Source",
+                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "esr": 0,
+                    "message": f"Safety limit violated for {source_command}"
+                })
+                if self._stop_on_error:
+                    break
+                continue
+
+            try:
+                self.source.write(source_command)
+                self._audit_logger.info(
+                    "Source command sent",
+                    extra={
+                        "event_type": "source_command_sent",
+                        "procedure_id": procedure.procedure_id,
+                        "command": source_command,
+                    },
+                )
+            except Exception as exc:
+                self._operational_logger.error(
+                    f"Source command failed: {exc}",
+                    extra={
+                        "event_type": "source_command_failed",
+                        "procedure_id": procedure.procedure_id,
+                        "command": source_command,
+                        "error": str(exc),
+                    },
+                )
+                continue
+
+            self.wait_for_settle(self.source)
+
+            if not self.check_errors(self.source, "Source"):
+                if self._stop_on_error:
+                    break
+                continue
+
+            measured = self.measure_with_command(procedure.dut_query_command)
+            if measured is None:
+                continue
+
+            if not self.check_errors(self.dut, "DUT"):
+                if self._stop_on_error:
+                    break
+                continue
+
+            error = abs(measured - target)
+            status = "PASS" if error <= procedure.tolerance else "FAIL"
+
+            result = TestResult(
+                target_value=target,
+                measured_value=measured,
+                tolerance=procedure.tolerance,
+                operator=operator_name,
+                session_id=session_id,
+                supervisor=supervisor,
+                procedure_id=procedure.procedure_id,
+                source_id=source_id,
+                dut_id=dut_id,
+                metadata={
+                    "source_command": source_command,
+                    "dut_query_command": procedure.dut_query_command,
+                },
+            )
+            self.results.append(result)
+
+            self._audit_logger.info(
+                "Point result",
+                extra={
+                    "event_type": "point_result",
+                    "procedure_id": procedure.procedure_id,
+                    "target": target,
+                    "measured": measured,
+                    "error": round(error, 4),
+                    "status": status,
+                },
+            )
+
+        total = len(self.results)
+        passed = sum(1 for r in self.results if r.status == "PASS")
+
+        self._audit_logger.info(
+            "Procedure completed",
+            extra={
+                "event_type": "procedure_complete",
+                "procedure_id": procedure.procedure_id,
+                "passed": passed,
+                "total": total,
+                "error_count": len(self._errors),
+            },
+        )
+
+        if self._errors:
+            self._operational_logger.warning(
+                f"Errors encountered during procedure: {len(self._errors)}",
+                extra={
+                    "event_type": "procedure_errors",
+                    "procedure_id": procedure.procedure_id,
+                    "error_count": len(self._errors),
+                },
+            )
+
+        return self.results
+
+    def measure_with_command(self, query_command):
+        """Read a measurement from the DUT using a procedure-supplied query."""
+        if not self.dut:
+            self._operational_logger.error(
+                "DUT not connected",
+                extra={"event_type": "dut_not_connected"},
+            )
+            return None
+        try:
+            raw = self.dut.query(query_command)
+            value = float(raw)
+            self._operational_logger.debug(
+                f"DUT measured: {value}",
+                extra={"event_type": "dut_measured", "value": value, "command": query_command},
+            )
+            return value
+        except Exception as exc:
+            self._operational_logger.error(
+                f"DUT measurement failed for {query_command}: {exc}",
+                extra={
+                    "event_type": "dut_measure_failed",
+                    "command": query_command,
+                    "error": str(exc),
+                },
+            )
+            return None
+
+    # ========================================================================
+    # Safety Limit Helpers
+    # ========================================================================
+
+    def _extract_command_root(self, source_command_template: str) -> str:
+        """Extract the SCPI command root from a template.
+
+        Example:
+            "SOUR:VOLT {value}" -> "SOUR:VOLT"
+            "FREQ {value} MHz"  -> "FREQ"
+        """
+        root = source_command_template.strip().split("{")[0].strip()
+        return root.upper()
+
+    def _check_source_safety(self, source_command: str, value: float) -> bool:
+        """Check the source command value against configured safety limits.
+
+        Args:
+            source_command: Full formatted source command string.
+            value: Numeric value being set.
+
+        Returns:
+            bool: True if allowed, False if out of limits.
+        """
+        if not self._source_safety_limits:
+            return True
+
+        root = source_command.strip().split(" ")[0].upper()
+
+        limits = self._source_safety_limits.get(root)
+        if limits is None:
+            return True
+
+        min_val = limits.get("min")
+        max_val = limits.get("max")
+
+        if min_val is not None and value < min_val:
+            self._security_logger.warning(
+                f"Safety: {root} value {value} below min {min_val}",
+                extra={
+                    "event_type": "safety_below_min",
+                    "command_root": root,
+                    "value": value,
+                    "min": min_val,
+                },
+            )
+            return False
+        if max_val is not None and value > max_val:
+            self._security_logger.warning(
+                f"Safety: {root} value {value} above max {max_val}",
+                extra={
+                    "event_type": "safety_above_max",
+                    "command_root": root,
+                    "value": value,
+                    "max": max_val,
+                },
+            )
+            return False
+
+        return True
 
     def get_results(self):
         """Get the test results."""

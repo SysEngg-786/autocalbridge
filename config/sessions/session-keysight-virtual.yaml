@@ -1,0 +1,16 @@
+# File: config/sessions/session-keysight-virtual.yaml
+# Path: /d/Projects/autocalbridge/config/sessions/session-keysight-virtual.yaml
+# Purpose: Session configuration for full virtual calibration demo using
+#          existing Keysight source and DMM simulators.
+#          procedure references a procedure ID under config/procedures/.
+
+session_id: session-keysight-virtual
+label: Keysight virtual calibration demo
+operator: Demo_Operator
+supervisor: Lab_Supervisor
+source_id: keysight_source
+dut_id: keysight_34461a
+procedure: keysight_source_to_34461a
+metadata:
+  site: Local Dev
+  purpose: Phase 3 procedure-driven virtual verification

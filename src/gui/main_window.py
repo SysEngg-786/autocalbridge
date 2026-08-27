@@ -1,206 +1,214 @@
 # File: src/gui/main_window.py
-# Path: /autocalbridge/src/gui/main_window.py
-# Purpose: Main window for AutoCalBridge GUI.
+# Path: /d/Projects/autocalbridge/src/gui/main_window.py
+# Purpose: Main window shell using resizable paned windows.
+#          Top status ribbon, prominent instrument display, Exit button.
+#          Horizontal paned window for Setup | Run | Results.
+#          Vertical paned window for main area | bottom command+log area.
+#          Command panel sits directly above the log window with a border.
 
+import os
 import tkinter as tk
 from tkinter import ttk
+
+from src.gui.panels.setup_panel import SetupPanel
+from src.gui.panels.run_panel import RunPanel
+from src.gui.panels.results_panel import ResultsPanel
+from src.gui.panels.command_panel import CommandPanel
+from src.gui.panels.log_panel import LogPanel
+
+from src.core.session_runner import run_session, SessionRunnerError
+from src.core.report_generator import ReportGenerator
+from src.utils.structured_logger import setup_logging
 
 
 class MainWindow:
     """Main window for AutoCalBridge GUI."""
 
     def __init__(self, root):
-        """Initialize the main window."""
         self.root = root
         self.root.title("AutoCalBridge (ACB)")
-        self.root.geometry("950x650")
+        self.root.geometry("1200x720")
         self.root.configure(bg="#f4f6f9")
 
-        # Configure styles
+        # Initialize structured logging once for the application.
+        setup_logging()
+
         self.style = ttk.Style()
         self.style.theme_use("clam")
         self.style.configure(".", background="#f4f6f9", foreground="#333333")
-        self.style.configure("TButton", font=("Segoe UI", 10, "bold"), padding=6)
-        self.style.configure("TLabel", font=("Segoe UI", 9), background="#f4f6f9")
         self.style.configure("TFrame", background="#f4f6f9")
+        self.style.configure("TLabel", background="#f4f6f9", font=("Segoe UI", 9))
+        self.style.configure("TButton", font=("Segoe UI", 10, "bold"), padding=6)
+        self.style.configure(
+            "Accent.TButton",
+            background="#003366",
+            foreground="#ffffff",
+            font=("Segoe UI", 10, "bold"),
+            padding=8,
+        )
 
-        # Create main layout
         self.create_layout()
 
     def create_layout(self):
-        """Create the main layout."""
-        # Left panel (controls)
-        self.control_frame = tk.Frame(self.root, bg="#ffffff", bd=1, relief="solid", width=320)
-        self.control_frame.pack(side="left", fill="y", padx=15, pady=15)
-        self.control_frame.pack_propagate(False)
+        """Create the panel-based resizable layout."""
+        # Top blue ribbon
+        self.top_ribbon = tk.Frame(self.root, bg="#003366", height=32)
+        self.top_ribbon.pack(side="top", fill="x")
 
-        # Right panel (display)
-        self.display_frame = tk.Frame(self.root, bg="#f4f6f9")
-        self.display_frame.pack(side="right", fill="both", expand=True, padx=15, pady=15)
-
-        # Populate control panel
-        self.create_control_panel()
-
-        # Populate display panel
-        self.create_display_panel()
-
-    def create_control_panel(self):
-        """Create the control panel."""
-        # Header
-        header = tk.Label(
-            self.control_frame,
+        ribbon_title = tk.Label(
+            self.top_ribbon,
             text="AUTOCALBRIDGE",
-            font=("Segoe UI", 14, "bold"),
-            bg="#ffffff",
-            fg="#003366"
+            bg="#003366",
+            fg="#ffffff",
+            font=("Segoe UI", 10, "bold"),
+            padx=10,
+            pady=4,
         )
-        header.pack(anchor="w", padx=10, pady=15)
+        ribbon_title.pack(side="left")
 
-        # Connection section
-        tk.Label(
-            self.control_frame,
-            text="Instrument Connection",
-            font=("Segoe UI", 11, "bold"),
-            bg="#ffffff",
-            fg="#003366"
-        ).pack(anchor="w", padx=10, pady=(10, 5))
-
-        # VISA address
-        tk.Label(self.control_frame, text="VISA Address:", bg="#ffffff").pack(anchor="w", padx=10)
-        self.entry_visa = ttk.Entry(self.control_frame)
-        self.entry_visa.insert(0, "TCPIP0::localhost::hislip0::INSTR")
-        self.entry_visa.pack(fill="x", padx=10, pady=3)
-
-        # Connect button
-        self.btn_connect = ttk.Button(
-            self.control_frame,
-            text="Connect",
-            command=self.on_connect
+        # Exit button on top right
+        self.exit_button = tk.Button(
+            self.top_ribbon,
+            text="Exit",
+            command=self.root.destroy,
+            bg="#003366",
+            fg="#ffffff",
+            activebackground="#002244",
+            activeforeground="#ffffff",
+            bd=0,
+            font=("Segoe UI", 9, "bold"),
+            padx=10,
         )
-        self.btn_connect.pack(fill="x", padx=10, pady=5)
+        self.exit_button.pack(side="right")
 
-        # Status label
-        self.status_label = tk.Label(
-            self.control_frame,
-            text="Disconnected",
-            bg="#ffffff",
-            fg="#888888"
+        # Prominent status display below top ribbon
+        self.status_display = tk.Label(
+            self.root,
+            text="Instrument: --    |    Status: --",
+            bg="#eef2f7",
+            fg="#333333",
+            anchor="w",
+            padx=10,
+            pady=4,
+            font=("Segoe UI", 10, "bold"),
         )
-        self.status_label.pack(anchor="w", padx=10, pady=2)
+        self.status_display.pack(side="top", fill="x")
 
-        # Separator
-        ttk.Separator(self.control_frame, orient="horizontal").pack(fill="x", padx=10, pady=10)
+        # Main vertical paned window: main work area vs bottom log area
+        self.vertical_paned = ttk.PanedWindow(self.root, orient="vertical")
+        self.vertical_paned.pack(fill="both", expand=True)
 
-        # Test configuration section
-        tk.Label(
-            self.control_frame,
-            text="Test Configuration",
-            font=("Segoe UI", 11, "bold"),
-            bg="#ffffff",
-            fg="#003366"
-        ).pack(anchor="w", padx=10, pady=(10, 5))
+        # Top horizontal paned window: Setup | Run | Results
+        self.horizontal_paned = ttk.PanedWindow(self.vertical_paned, orient="horizontal")
+        self.vertical_paned.add(self.horizontal_paned, weight=4)
 
-        # Vendor selection
-        tk.Label(self.control_frame, text="Vendor:", bg="#ffffff").pack(anchor="w", padx=10)
-        self.vendor_var = tk.StringVar(value="Keysight")
-        self.vendor_combo = ttk.Combobox(
-            self.control_frame,
-            textvariable=self.vendor_var,
-            values=["Keysight", "Tektronix", "Rohde & Schwarz", "Keithley"],
-            state="readonly"
+        # Left setup panel
+        self.setup_panel = SetupPanel(
+            self.horizontal_paned,
+            on_status=self.set_status,
+            log_panel=None,  # temporarily no log panel; will update later
         )
-        self.vendor_combo.pack(fill="x", padx=10, pady=3)
+        self.setup_panel.pack(side="left", fill="y", padx=5, pady=5)
+        self.horizontal_paned.add(self.setup_panel, weight=0)
 
-        # Instrument selection
-        tk.Label(self.control_frame, text="Instrument:", bg="#ffffff").pack(anchor="w", padx=10)
-        self.instrument_var = tk.StringVar(value="34461A")
-        self.instrument_combo = ttk.Combobox(
-            self.control_frame,
-            textvariable=self.instrument_var,
-            values=["34461A", "34970A", "N5171B"],
-            state="readonly"
+        # Center run panel
+        self.run_panel = RunPanel(
+            self.horizontal_paned,
+            on_run_callback=self.run_selected_session,
+            on_status=self.set_status,
         )
-        self.instrument_combo.pack(fill="x", padx=10, pady=3)
+        self.run_panel.pack(side="left", fill="both", expand=True, padx=5, pady=5)
+        self.horizontal_paned.add(self.run_panel, weight=1)
 
-        # Test points
-        tk.Label(self.control_frame, text="Test Points (V):", bg="#ffffff").pack(anchor="w", padx=10)
-        self.entry_points = ttk.Entry(self.control_frame)
-        self.entry_points.insert(0, "1.0, 2.5, 5.0, 10.0")
-        self.entry_points.pack(fill="x", padx=10, pady=3)
-
-        # Tolerance
-        tk.Label(self.control_frame, text="Tolerance (V):", bg="#ffffff").pack(anchor="w", padx=10)
-        self.entry_tolerance = ttk.Entry(self.control_frame)
-        self.entry_tolerance.insert(0, "0.005")
-        self.entry_tolerance.pack(fill="x", padx=10, pady=3)
-
-        # Run button
-        self.btn_run = ttk.Button(
-            self.control_frame,
-            text="Run Test",
-            command=self.on_run_test,
-            state="disabled"
+        # Right results panel
+        self.results_panel = ResultsPanel(
+            self.horizontal_paned,
+            on_status=self.set_status,
         )
-        self.btn_run.pack(fill="x", padx=10, pady=15)
+        self.results_panel.pack(side="right", fill="y", padx=5, pady=5)
+        self.horizontal_paned.add(self.results_panel, weight=0)
 
-    def create_display_panel(self):
-        """Create the display panel."""
-        # Log terminal
-        tk.Label(
-            self.display_frame,
-            text="System Log",
-            font=("Segoe UI", 10, "bold")
-        ).pack(anchor="w", pady=2)
+        # Bottom container: command panel above log panel with border
+        bottom_container = ttk.Frame(self.vertical_paned)
+        self.vertical_paned.add(bottom_container, weight=1)
 
-        self.log_terminal = tk.Text(
-            self.display_frame,
-            height=10,
-            bg="#1e1e1e",
-            fg="#4af626",
-            font=("Consolas", 10),
-            bd=0
+        # Command panel wrapped in a bordered frame
+        command_border_frame = tk.Frame(
+            bottom_container,
+            bg="#003366",
+            bd=2,
+            relief="groove",
         )
-        self.log_terminal.pack(fill="x", pady=5)
+        command_border_frame.pack(fill="x", padx=5, pady=(5, 0))
 
-        # Results area
-        tk.Label(
-            self.display_frame,
-            text="Results",
-            font=("Segoe UI", 10, "bold")
-        ).pack(anchor="w", pady=2)
-
-        self.results_frame = tk.Frame(self.display_frame, bg="#ffffff", bd=1, relief="solid")
-        self.results_frame.pack(fill="both", expand=True, pady=5)
-
-        # Placeholder
-        placeholder = tk.Label(
-            self.results_frame,
-            text="Run a test to see results here.",
-            bg="#ffffff",
-            font=("Segoe UI", 10, "italic")
+        self.command_panel = CommandPanel(
+            command_border_frame,
+            get_selected_instrument_id=self.get_selected_instrument_id,
+            log_panel=None,  # will be wired after log panel creation
+            on_status=self.set_status,
         )
-        placeholder.pack(expand=True)
+        self.command_panel.pack(fill="x", padx=2, pady=2)
 
-    def on_connect(self):
-        """Handle connect button click."""
-        address = self.entry_visa.get().strip()
-        self.log("Connecting to: " + address)
-        self.status_label.config(text="Connecting...", fg="#ff8800")
-        # TODO: Implement connection logic
-        self.status_label.config(text="Connected", fg="#00aa00")
-        self.btn_run.config(state="normal")
-        self.log("Connection successful")
+        # Log panel
+        self.log_panel = LogPanel(bottom_container, height=8)
+        self.log_panel.pack(fill="both", expand=True, padx=5, pady=5)
 
-    def on_run_test(self):
-        """Handle run test button click."""
-        self.log("Starting test sequence...")
-        # TODO: Implement test execution
-        self.log("Test sequence completed")
+        # Wire log panel to setup and command panels
+        self.setup_panel.log_panel = self.log_panel
+        self.command_panel.log_panel = self.log_panel
 
-    def log(self, message):
-        """Add a message to the log terminal."""
-        from datetime import datetime
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        self.log_terminal.insert(tk.END, f"[{timestamp}] {message}\n")
-        self.log_terminal.see(tk.END)
-        self.root.update_idletasks()
+    def set_status(self, message, level="INFO"):
+        """Update the top status bar text."""
+        self.status_display.config(text=message)
+
+    def log(self, message, level="INFO"):
+        """Route a message to the log panel."""
+        if hasattr(self.log_panel, "log_terminal"):
+            self.log_panel.log_terminal.log(message, level)
+
+    def get_selected_instrument_id(self):
+        """Return the currently selected instrument ID from SetupPanel."""
+        return self.setup_panel.get_selected_instrument_id()
+
+    def run_selected_session(self):
+        """Run the session selected in the setup panel."""
+        session_file = self.setup_panel.get_selected_session_file()
+
+        if not session_file:
+            self.log("No session file selected.", "ERROR")
+            self.set_status("No session selected")
+            return
+
+        if not os.path.isfile(session_file):
+            self.log(f"Session file not found: {session_file}", "ERROR")
+            self.set_status("Session file not found")
+            return
+
+        self.set_status("Running session ...")
+        self.log(f"Running session: {session_file}")
+
+        try:
+            results, errors = run_session(session_file)
+        except SessionRunnerError as exc:
+            self.log(f"Session run failed: {exc}", "ERROR")
+            self.set_status("Session run failed")
+            return
+
+        # Show results in results panel.
+        self.results_panel.set_results(results)
+
+        if errors:
+            self.log(f"Errors encountered: {len(errors)}", "WARNING")
+            for err in errors:
+                self.log(
+                    f"{err.get('instrument', 'Unknown')}: {err.get('message', '')}",
+                    "ERROR",
+                )
+
+        # Generate a CSV report and show its path.
+        try:
+            report_generator = ReportGenerator()
+            report_path = report_generator.generate_report(results, prefix="GUI")
+            self.log(f"Report saved to: {report_path}", "SUCCESS")
+        except Exception as exc:
+            self.log(f"Report generation failed: {exc}", "WARNING")

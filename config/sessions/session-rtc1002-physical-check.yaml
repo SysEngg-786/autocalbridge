@@ -1,0 +1,14 @@
+# File: config/sessions/session-rtc1002-physical-check.yaml
+# Path: /d/Projects/autocalbridge/config/sessions/session-rtc1002-physical-check.yaml
+# Purpose: Physical endpoint verification through session resolver.
+
+session_id: session-rtc1002-physical-check
+label: RTC1002 physical session resolver check
+operator: Demo_Operator
+supervisor: Lab_Supervisor
+source_id: rtc1002-lab1
+dut_id: rtc1002-sim-dut
+procedure: ""            # reserved
+metadata:
+  site: Local Dev
+  purpose: Verify physical RTC1002 opens via session resolver

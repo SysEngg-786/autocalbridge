@@ -22,6 +22,10 @@ Log destinations:
 Session context is read lazily inside formatter methods to avoid circular
 imports during package initialization. No caller needs to pass session
 fields manually.
+
+All fields supplied through the `extra` argument to a logger call are
+included in the output. Internal logging-record attributes are excluded
+so the output contains only meaningful event data.
 """
 
 import json
@@ -34,10 +38,53 @@ OPERATIONAL_LOG_DIR = "logs/operational"
 AUDIT_LOG_DIR = "logs/audit"
 SECURITY_LOG_DIR = "logs/security"
 
-# Logger names. These are importable and stable for external configuration.
+# Logger names.
 OPERATIONAL_LOGGER_NAME = "acb.operational"
 AUDIT_LOGGER_NAME = "acb.audit"
 SECURITY_LOGGER_NAME = "acb.security"
+
+# Standard logging.LogRecord fields that must not be copied into event payload.
+_INTERNAL_RECORD_FIELDS = {
+    "args",
+    "asctime",
+    "created",
+    "exc_info",
+    "exc_text",
+    "filename",
+    "funcName",
+    "levelname",
+    "levelno",
+    "lineno",
+    "module",
+    "msecs",
+    "msg",
+    "name",
+    "pathname",
+    "process",
+    "processName",
+    "relativeCreated",
+    "stack_info",
+    "thread",
+    "threadName",
+    "taskName",
+}
+
+
+def _extra_fields(record):
+    """
+    Return a dictionary of all non-internal fields supplied via `extra`.
+
+    Args:
+        record: logging.LogRecord instance.
+
+    Returns:
+        dict: Event-specific fields, excluding standard LogRecord internals.
+    """
+    result = {}
+    for key, value in record.__dict__.items():
+        if key not in _INTERNAL_RECORD_FIELDS:
+            result[key] = value
+    return result
 
 
 class JsonLineFormatter(logging.Formatter):
@@ -45,7 +92,7 @@ class JsonLineFormatter(logging.Formatter):
     JSON Lines formatter for machine-readable logs.
 
     Each log record becomes one JSON object on one line. Session context
-    fields are merged automatically. Extra record fields are preserved.
+    and all extra fields are merged automatically.
     """
 
     def format(self, record):
@@ -59,31 +106,12 @@ class JsonLineFormatter(logging.Formatter):
             "message": record.getMessage(),
         }
 
-        # Merge session context if one is active.
         session_ctx = get_session_context()
         if session_ctx is not None:
             log_entry.update(session_ctx.to_dict())
 
-        # Preserve explicitly supplied structured fields.
-        for key, value in record.__dict__.items():
-            if key in {
-                "event_type",
-                "command",
-                "response",
-                "error",
-                "reason",
-                "instrument_id",
-                "resource_string",
-                "result",
-                "subject",
-                "bind_host",
-                "bind_port",
-                "actor",
-                "role",
-            }:
-                log_entry[key] = value
+        log_entry.update(_extra_fields(record))
 
-        # Include exception text if an exception was logged.
         if record.exc_info and record.exc_info[0] is not None:
             log_entry["exception"] = self.formatException(record.exc_info)
 
@@ -94,11 +122,11 @@ class OperationalFormatter(logging.Formatter):
     """
     Plain text key=value formatter for operational logs.
 
-    The format remains human-readable while including session context.
+    The format remains human-readable while including session context and
+    all extra fields supplied by the caller.
     """
 
     def format(self, record):
-        # Lazy import avoids circular dependency at module import time.
         from src.core.session_context import get_session_context
 
         parts = [
@@ -116,10 +144,8 @@ class OperationalFormatter(logging.Formatter):
 
         parts.append(record.getMessage())
 
-        for key in ("event_type", "command", "response", "error", "instrument_id", "result"):
-            value = getattr(record, key, None)
-            if value is not None:
-                parts.append(f"{key}={value}")
+        for key, value in _extra_fields(record).items():
+            parts.append(f"{key}={value}")
 
         if record.exc_info and record.exc_info[0] is not None:
             parts.append(self.formatException(record.exc_info))
@@ -149,7 +175,6 @@ def setup_logging():
     This function is idempotent for the loggers it configures. It does not
     call logging.basicConfig, so other application loggers are not affected.
     """
-    # Operational logger: plain text.
     operational = logging.getLogger(OPERATIONAL_LOGGER_NAME)
     operational.setLevel(logging.INFO)
     operational.handlers.clear()
@@ -157,7 +182,6 @@ def setup_logging():
         _make_file_handler(OPERATIONAL_LOG_DIR, OperationalFormatter())
     )
 
-    # Audit logger: JSON Lines.
     audit = logging.getLogger(AUDIT_LOGGER_NAME)
     audit.setLevel(logging.INFO)
     audit.handlers.clear()
@@ -165,7 +189,6 @@ def setup_logging():
         _make_file_handler(AUDIT_LOG_DIR, JsonLineFormatter())
     )
 
-    # Security logger: JSON Lines.
     security = logging.getLogger(SECURITY_LOGGER_NAME)
     security.setLevel(logging.INFO)
     security.handlers.clear()
