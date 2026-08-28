@@ -6,6 +6,7 @@
 #          Instrument dropdown and Refresh button share one row.
 #          Test Connection button is below the dropdown row.
 #          Network Setup button is a placeholder for future work.
+#          Updates the top status bar with instrument and connection state.
 
 import os
 import tkinter as tk
@@ -150,15 +151,15 @@ class SetupPanel(ttk.Frame):
         if self.log_panel is not None:
             self.log_panel.log_terminal.log(message, level)
 
-    def set_status(self, message):
+    def set_status(self, message, level="INFO"):
         """Update the top status bar if callback exists."""
         if self.on_status is not None:
-            self.on_status(message)
+            self.on_status(message, level)
 
     def network_setup(self):
         """Placeholder for future network setup panel."""
         self.log("Network Setup is not implemented yet.", "WARNING")
-        self.set_status("Network Setup not implemented")
+        self.set_status("Network Setup not implemented", "WARNING")
 
     def refresh_all(self):
         """Refresh all dropdowns and current selection state."""
@@ -176,7 +177,7 @@ class SetupPanel(ttk.Frame):
             self.registry = load_registry()
         except Exception as exc:
             self.log(f"Registry load failed: {exc}", "ERROR")
-            self.set_status("Registry load failed")
+            self.set_status("Registry load failed", "ERROR")
             return
 
         show_simulators = self.show_simulators_var.get()
@@ -238,7 +239,7 @@ class SetupPanel(ttk.Frame):
         return self._instrument_display_to_id.get(display, "")
 
     def on_instrument_selected(self, event=None):
-        """Update instrument info label and test button state."""
+        """Update instrument info label, test button state, and top status."""
         entry_id = self.get_selected_instrument_id()
         if not entry_id or self.registry is None:
             self.test_button.config(state="disabled")
@@ -259,6 +260,7 @@ class SetupPanel(ttk.Frame):
         )
         self.instrument_info_label.config(text=info)
         self.test_button.config(state="normal")
+        self.set_status(f"Instrument: {entry_id} | Status: Not tested", "INFO")
 
     def test_selected_instrument(self):
         """Test connectivity to the selected instrument."""
@@ -271,7 +273,7 @@ class SetupPanel(ttk.Frame):
             self.log(f"Instrument not found: {entry_id}", "ERROR")
             return
 
-        self.set_status(f"Testing {entry_id} ...")
+        self.set_status(f"Instrument: {entry_id} | Status: Testing...", "RUNNING")
         self.log(f"Testing {entry_id} ...")
 
         try:
@@ -280,18 +282,18 @@ class SetupPanel(ttk.Frame):
                 idn = endpoint.query("*IDN?")
                 if idn and idn.strip():
                     self.log(f"{entry_id} IDN: {idn.strip()}", "SUCCESS")
-                    self.set_status(f"{entry_id} connected")
+                    self.set_status(f"Instrument: {entry_id} | Status: Connected", "SUCCESS")
                 else:
                     self.log(f"{entry_id} returned empty IDN response.", "ERROR")
-                    self.set_status(f"{entry_id} test failed")
+                    self.set_status(f"Instrument: {entry_id} | Status: Failed", "ERROR")
             except InstrumentEndpointError as exc:
                 self.log(f"{entry_id} test failed: {exc.message}", "ERROR")
-                self.set_status(f"{entry_id} test failed")
+                self.set_status(f"Instrument: {entry_id} | Status: Failed", "ERROR")
             finally:
                 endpoint.close()
         except InstrumentEndpointError as exc:
             self.log(f"{entry_id} open failed: {exc.message}", "ERROR")
-            self.set_status(f"{entry_id} open failed")
+            self.set_status(f"Instrument: {entry_id} | Status: Failed", "ERROR")
 
     def get_selected_session_file(self):
         """Return full path to the selected session file, or empty string."""

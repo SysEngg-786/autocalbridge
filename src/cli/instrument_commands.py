@@ -102,6 +102,73 @@ def _sanitize_scpi_command(raw_command):
     return command
 
 
+def _resolve_and_open(entry_id):
+    """
+    Resolve a registry entry ID and open an endpoint for it.
+
+    Args:
+        entry_id: Instrument instance ID from registry.
+
+    Returns:
+        tuple: (entry, endpoint) on success.
+
+    Raises:
+        LookupError: If entry not found.
+        InstrumentEndpointError: If endpoint open fails.
+    """
+    try:
+        registry = get_registry()
+    except FileNotFoundError as e:
+        raise LookupError(f"Registry file missing: {e}") from e
+    except RegistryValidationError as e:
+        raise LookupError(f"Registry validation failed: {e}") from e
+
+    entry = find_entry(registry, entry_id)
+    if entry is None:
+        raise LookupError(f"No instrument found with id '{entry_id}'.")
+
+    endpoint = open_endpoint_for_entry(entry)
+    return entry, endpoint
+
+
+def run_single_command(entry_id, raw_command):
+    """
+    Execute a single sanitized SCPI command/query on a registered instrument.
+
+    This function does not print anything. It returns a tuple of
+    (success, response_text). For a query, response_text contains the
+    instrument's response. For a write, response_text is empty.
+
+    Args:
+        entry_id: Instrument instance ID from registry.
+        raw_command: Raw SCPI command string.
+
+    Returns:
+        tuple: (bool, str). bool is True on success, False on failure.
+    """
+    try:
+        command = _sanitize_scpi_command(raw_command)
+    except ValueError as e:
+        return False, str(e)
+
+    try:
+        entry, endpoint = _resolve_and_open(entry_id)
+    except (LookupError, InstrumentEndpointError) as e:
+        return False, str(e)
+
+    try:
+        if command.endswith("?"):
+            response = endpoint.query(command)
+            return True, (response.strip() if response else "")
+        else:
+            endpoint.write(command)
+            return True, ""
+    except InstrumentEndpointError as e:
+        return False, e.message
+    finally:
+        endpoint.close()
+
+
 def test_instrument(entry_id):
     """
     Test basic connectivity to a registered instrument.
@@ -462,9 +529,9 @@ def send_instrument(entry_id, scpi_command):
     """
     Send one user-supplied SCPI command to a registered instrument.
 
-    The command is sanitized before use. A command ending with '?' is
-    treated as a query and the response is printed. Other commands are
-    treated as writes.
+    This is a thin wrapper around run_single_command that prints the result
+    to standard output for CLI use. GUI code should use run_single_command
+    to capture the response directly.
 
     Args:
         entry_id: Instrument instance ID from registry.
@@ -473,84 +540,14 @@ def send_instrument(entry_id, scpi_command):
     Returns:
         int: 0 on success, 1 on failure.
     """
-    operational_logger = get_operational_logger()
-    audit_logger = get_audit_logger()
+    success, response = run_single_command(entry_id, scpi_command)
 
-    try:
-        command = _sanitize_scpi_command(scpi_command)
-    except ValueError as e:
-        operational_logger.error(
-            "Command rejected by sanitizer",
-            extra={"event_type": "send_rejected", "instrument_id": entry_id, "error": str(e)},
-        )
-        print(f"Command rejected: {e}")
-        return 1
-
-    try:
-        registry = get_registry()
-    except FileNotFoundError as e:
-        operational_logger.error(
-            "Registry file missing",
-            extra={"event_type": "send_failed", "instrument_id": entry_id, "error": str(e)},
-        )
-        print(f"Error: {e}")
-        return 1
-    except RegistryValidationError as e:
-        operational_logger.error(
-            "Registry validation failed",
-            extra={"event_type": "send_failed", "instrument_id": entry_id, "error": str(e)},
-        )
-        print("Registry validation failed:")
-        print(e)
-        return 1
-
-    entry = find_entry(registry, entry_id)
-    if entry is None:
-        operational_logger.error(
-            "Instrument not found",
-            extra={"event_type": "send_failed", "instrument_id": entry_id},
-        )
-        print(f"Send failed: no instrument found with id '{entry_id}'.")
-        return 1
-
-    audit_logger.info(
-        "Single command send started",
-        extra={"event_type": "send_start", "instrument_id": entry_id, "command": command},
-    )
-
-    print(f"Sending to {entry.id} using {entry.connection}: {command}")
-
-    try:
-        endpoint = open_endpoint_for_entry(entry)
-        try:
-            if command.endswith("?"):
-                response = endpoint.query(command)
-                print(response.strip() if response else "")
-                audit_logger.info(
-                    "Single command query sent",
-                    extra={"event_type": "send_success", "instrument_id": entry_id, "command": command, "response": response.strip() if response else ""},
-                )
-            else:
-                endpoint.write(command)
-                print("Command sent.")
-                audit_logger.info(
-                    "Single command write sent",
-                    extra={"event_type": "send_success", "instrument_id": entry_id, "command": command},
-                )
-            return 0
-        except InstrumentEndpointError as e:
-            print(f"Send failed: {e.message}")
-            operational_logger.error(
-                "Endpoint error during send",
-                extra={"event_type": "send_failed", "instrument_id": entry_id, "command": command, "error": e.message},
-            )
-            return 1
-        finally:
-            endpoint.close()
-    except InstrumentEndpointError as e:
-        print(f"Send failed to open endpoint: {e.message}")
-        operational_logger.error(
-            "Endpoint open failed during send",
-            extra={"event_type": "send_failed", "instrument_id": entry_id, "command": command, "error": e.message},
-        )
+    if success:
+        if response:
+            print(response)
+        else:
+            print("Command sent.")
+        return 0
+    else:
+        print(f"Send failed: {response}")
         return 1

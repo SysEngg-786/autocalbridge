@@ -136,3 +136,6 @@ project-tree.txt
 # pyproject.toml    <- KEEP — shows project metadata
 # Deployment registry - local instance data
 config/instruments_registry.yaml
+
+# Internal development records — not for public repo
+docs/dev/

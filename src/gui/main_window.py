@@ -158,8 +158,16 @@ class MainWindow:
         self.command_panel.log_panel = self.log_panel
 
     def set_status(self, message, level="INFO"):
-        """Update the top status bar text."""
-        self.status_display.config(text=message)
+        """Update the top status bar text with color coding."""
+        colors = {
+            "INFO": "#333333",
+            "SUCCESS": "#008000",
+            "WARNING": "#b36b00",
+            "ERROR": "#b00000",
+            "RUNNING": "#b36b00",
+        }
+        fg = colors.get(level.upper(), "#333333")
+        self.status_display.config(text=message, fg=fg)
 
     def log(self, message, level="INFO"):
         """Route a message to the log panel."""
@@ -184,14 +192,14 @@ class MainWindow:
             self.set_status("Session file not found")
             return
 
-        self.set_status("Running session ...")
+        self.set_status("Running session ...", "RUNNING")
         self.log(f"Running session: {session_file}")
 
         try:
             results, errors = run_session(session_file)
         except SessionRunnerError as exc:
             self.log(f"Session run failed: {exc}", "ERROR")
-            self.set_status("Session run failed")
+            self.set_status("Session run failed", "ERROR")
             return
 
         # Show results in results panel.

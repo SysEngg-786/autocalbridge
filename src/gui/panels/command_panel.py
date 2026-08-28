@@ -1,7 +1,8 @@
 # File: src/gui/panels/command_panel.py
 # Path: /d/Projects/autocalbridge/src/gui/panels/command_panel.py
 # Purpose: Command panel for clean SCPI command/query input and built-in checks.
-#          Uses the selected instrument from SetupPanel via callback.
+#          Uses run_single_command so the response is returned and displayed
+#          in the GUI log panel instead of printing only to the console.
 
 import tkinter as tk
 from tkinter import ttk
@@ -11,7 +12,7 @@ from src.cli.instrument_commands import (
     basic_check_instrument,
     write_check_instrument,
     diagnostics_instrument,
-    send_instrument,
+    run_single_command,
 )
 
 
@@ -38,6 +39,7 @@ class CommandPanel(ttk.Frame):
         self.command_var = tk.StringVar()
         self.command_entry = ttk.Entry(self, textvariable=self.command_var, width=40)
         self.command_entry.pack(fill="x", pady=3)
+        self.command_entry.bind("<Return>", lambda event: self.send_command())
 
         self.send_button = ttk.Button(self, text="Send Command", command=self.send_command)
         self.send_button.pack(anchor="w", pady=(3, 8))
@@ -88,7 +90,11 @@ class CommandPanel(ttk.Frame):
             self.log_panel.log_terminal.log(message, level)
 
     def send_command(self):
-        """Send the clean SCPI command/query to the selected instrument."""
+        """Send the clean SCPI command/query to the selected instrument.
+
+        Uses run_single_command, which returns (success, response). The
+        response is displayed directly in the GUI log panel.
+        """
         self._set_selected_display()
         entry_id = self._require_instrument()
         if not entry_id:
@@ -100,63 +106,115 @@ class CommandPanel(ttk.Frame):
             return
 
         self.log(f"Sending to {entry_id}: {command}")
-        result = send_instrument(entry_id, command)
-        if result != 0:
-            self.log(f"Send command failed with exit code {result}.", "ERROR")
-            if self.on_status:
-                self.on_status("Command failed")
-        else:
+
+        success, response = run_single_command(entry_id, command)
+
+        if success:
+            if response:
+                self.log(f"Response: {response}", "SUCCESS")
+            else:
+                self.log("Command sent.", "SUCCESS")
             if self.on_status:
                 self.on_status("Command sent")
+        else:
+            self.log(f"Command failed: {response}", "ERROR")
+            if self.on_status:
+                self.on_status("Command failed")
 
     def run_test(self):
-        """Run the built-in connectivity test."""
+        """Run the built-in connectivity test and log the response."""
         self._set_selected_display()
         entry_id = self._require_instrument()
         if not entry_id:
             return
         self.log(f"Running test on {entry_id} ...")
-        result = test_instrument(entry_id)
-        if result != 0:
-            self.log("Test failed.", "ERROR")
+        success, response = run_single_command(entry_id, "*IDN?")
+        if success:
+            self.log(f"Test passed. IDN: {response}", "SUCCESS")
             if self.on_status:
-                self.on_status("Test failed")
+                self.on_status(f"Instrument: {entry_id} | Status: Connected", "SUCCESS")
+        else:
+            self.log(f"Test failed: {response}", "ERROR")
+            if self.on_status:
+                self.on_status(f"Instrument: {entry_id} | Status: Failed", "ERROR")
 
     def run_basic_check(self):
-        """Run the built-in basic read-only check."""
+        """Run the built-in basic read-only check and log the response."""
         self._set_selected_display()
         entry_id = self._require_instrument()
         if not entry_id:
             return
         self.log(f"Running basic check on {entry_id} ...")
-        result = basic_check_instrument(entry_id)
-        if result != 0:
-            self.log("Basic check completed with errors.", "ERROR")
+
+        commands = ["*IDN?", "*ESR?", "*STB?", "SYST:ERR?", "SYST:ERR:ALL?"]
+        failed = False
+        for cmd in commands:
+            success, response = run_single_command(entry_id, cmd)
+            if success:
+                self.log(f"{cmd} -> {response}", "INFO")
+            else:
+                self.log(f"{cmd} -> ERROR: {response}", "ERROR")
+                failed = True
+
+        if failed:
             if self.on_status:
-                self.on_status("Basic check failed")
+                self.on_status(f"Instrument: {entry_id} | Status: Basic check failed", "ERROR")
+        else:
+            if self.on_status:
+                self.on_status(f"Instrument: {entry_id} | Status: Basic check passed", "SUCCESS")
 
     def run_write_check(self):
-        """Run the built-in write path check."""
+        """Run the built-in write path check and log the response."""
         self._set_selected_display()
         entry_id = self._require_instrument()
         if not entry_id:
             return
         self.log(f"Running write check on {entry_id} ...")
-        result = write_check_instrument(entry_id)
-        if result != 0:
-            self.log("Write check completed with errors.", "ERROR")
+
+        write_commands = ["*CLS", "*WAI", "ACQ:STAT RUN", "CHAN1:STAT ON", "CHAN1:SCAL 0.01", "TIM:SCAL 0.001", "TIM:POS 0"]
+        failed = False
+        for cmd in write_commands:
+            success, response = run_single_command(entry_id, cmd)
+            if success:
+                # Check error queue after write
+                err_success, err_response = run_single_command(entry_id, "SYST:ERR?")
+                if err_success and err_response.startswith("0,"):
+                    self.log(f"WRITE {cmd} -> sent, no error", "INFO")
+                else:
+                    self.log(f"WRITE {cmd} -> sent, error: {err_response}", "ERROR")
+                    failed = True
+            else:
+                self.log(f"WRITE {cmd} -> ERROR: {response}", "ERROR")
+                failed = True
+
+        if failed:
             if self.on_status:
-                self.on_status("Write check failed")
+                self.on_status(f"Instrument: {entry_id} | Status: Write check failed", "ERROR")
+        else:
+            if self.on_status:
+                self.on_status(f"Instrument: {entry_id} | Status: Write check passed", "SUCCESS")
 
     def run_diagnostics(self):
-        """Run the built-in diagnostics checks."""
+        """Run the built-in diagnostics checks and log the response."""
         self._set_selected_display()
         entry_id = self._require_instrument()
         if not entry_id:
             return
         self.log(f"Running diagnostics on {entry_id} ...")
-        result = diagnostics_instrument(entry_id)
-        if result != 0:
-            self.log("Diagnostics completed with errors.", "ERROR")
+
+        diagnostic_commands = ["SYST:ERR:ALL?", "*ESR?", "*STB?", "STAT:OPER:EVEN?", "STAT:QUES:EVEN?", "*OPT?"]
+        failed = False
+        for cmd in diagnostic_commands:
+            success, response = run_single_command(entry_id, cmd)
+            if success:
+                self.log(f"{cmd} -> {response}", "INFO")
+            else:
+                self.log(f"{cmd} -> ERROR: {response}", "ERROR")
+                failed = True
+
+        if failed:
             if self.on_status:
-                self.on_status("Diagnostics failed")
+                self.on_status(f"Instrument: {entry_id} | Status: Diagnostics failed", "ERROR")
+        else:
+            if self.on_status:
+                self.on_status(f"Instrument: {entry_id} | Status: Diagnostics passed", "SUCCESS")

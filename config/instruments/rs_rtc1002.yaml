@@ -1,17 +1,12 @@
 # File: config/instruments/rs_rtc1002.yaml
 # Path: /d/Projects/autocalbridge/config/instruments/rs_rtc1002.yaml
 # Purpose: Capability profile for R&S RTC1002 oscilloscope.
-#          Contains identity and basic SCPI commands for initial connectivity
-#          and basic control. Does NOT fix deployment role; role is assigned
-#          at runtime by the session/test configuration.
+#          Contains identity and basic SCPI commands for connectivity,
+#          visual verification, and safe control.
+#          Does NOT fix deployment role; role is assigned at runtime.
 
 # ============================================================
 # PROFILE AUTHENTICITY STATUS
-# ============================================================
-# status:
-#   verified_manual           -> exact response/example from official manual
-#   manual_derived            -> derived from manual rules, no exact example
-#   placeholder_unverified    -> project-defined test profile only
 # ============================================================
 profile_status: placeholder_unverified
 
@@ -33,8 +28,7 @@ idn: "Rohde&Schwarz,RTC1002,0000000000000,00.000"
 # COMMAND RESPONSES
 # ============================================================
 # Common commands such as *IDN?, *ESR?, *OPC?, and SYST:ERR? are handled
-# centrally by MockInstrument and security/policy_loader.py. They are not
-# repeated here.
+# centrally by MockInstrument and security/policy_loader.py.
 # ============================================================
 responses:
   "SYST:ERR:ALL?": "0,\"No error\""
@@ -43,12 +37,22 @@ responses:
 # ============================================================
 # WRITE COMMANDS
 # ============================================================
-# Common writes such as *RST and *CLS are handled centrally by
-# MockInstrument and security/policy_loader.py. They are not repeated here.
+# Common writes such as *RST and *CLS are handled centrally.
+# These command roots are allowed for physical and virtual RTC1002 use.
+# Abbreviated forms are matched as roots by CommandPolicy.
 # ============================================================
 write_commands:
   - "ACQ:STAT"
   - "CHAN1:STAT"
   - "CHAN1:SCAL"
+  - "CHAN2:STAT"
+  - "CHAN2:SCAL"
   - "TIM:SCAL"
   - "TIM:POS"
+  - "MEAS1:ENAB"
+  - "MEAS1:MAIN"
+  - "CURS1:STAT"
+  - "CURS1:FUNC"
+  - "AUT"
+  - "DISP:GRID:STYL"
+  - "DISP:PERS:STAT"
