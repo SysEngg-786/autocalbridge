@@ -2,15 +2,15 @@
 # Path: /d/Projects/autocalbridge/src/gui/main_window.py
 # Purpose: Main window shell using resizable paned windows.
 #          Top status ribbon, prominent instrument display, Exit button.
-#          Horizontal paned window for Setup | Run | Results.
-#          Vertical paned window for main area | bottom command+log area.
-#          Command panel sits directly above the log window with a border.
+#          Left notebook contains Instrument and Session tabs.
+#          Right results panel, bottom command+log area remain unchanged.
 
 import os
 import tkinter as tk
 from tkinter import ttk
 
 from src.gui.panels.setup_panel import SetupPanel
+from src.gui.panels.session_panel import SessionPanel
 from src.gui.panels.run_panel import RunPanel
 from src.gui.panels.results_panel import ResultsPanel
 from src.gui.panels.command_panel import CommandPanel
@@ -46,6 +46,9 @@ class MainWindow:
             font=("Segoe UI", 10, "bold"),
             padding=8,
         )
+
+        # Default session panel mode. Later can be toggled from UI or launch.
+        self.session_panel_mode = "operator"
 
         self.create_layout()
 
@@ -98,18 +101,36 @@ class MainWindow:
         self.vertical_paned = ttk.PanedWindow(self.root, orient="vertical")
         self.vertical_paned.pack(fill="both", expand=True)
 
-        # Top horizontal paned window: Setup | Run | Results
+        # Top horizontal paned window: left notebook | center | results
         self.horizontal_paned = ttk.PanedWindow(self.vertical_paned, orient="horizontal")
         self.vertical_paned.add(self.horizontal_paned, weight=4)
 
-        # Left setup panel
+        # Left notebook with Instrument and Session tabs
+        self.left_notebook = ttk.Notebook(self.horizontal_paned)
+        self.left_notebook.pack(side="left", fill="y", padx=5, pady=5)
+
+        # Instrument tab: existing SetupPanel
         self.setup_panel = SetupPanel(
-            self.horizontal_paned,
+            self.left_notebook,
             on_status=self.set_status,
-            log_panel=None,  # temporarily no log panel; will update later
+            log_panel=None,  # will be wired after log panel creation
         )
-        self.setup_panel.pack(side="left", fill="y", padx=5, pady=5)
-        self.horizontal_paned.add(self.setup_panel, weight=0)
+        self.setup_panel.pack(fill="both", expand=True, padx=5, pady=5)
+        self.left_notebook.add(self.setup_panel, text="Instrument")
+
+        # Session tab: new SessionPanel
+        self.session_panel = SessionPanel(
+            self.left_notebook,
+            mode=self.session_panel_mode,
+            on_status=self.set_status,
+            log_panel=None,
+            on_session_created=self.on_session_created,
+        )
+        self.session_panel.pack(fill="both", expand=True, padx=5, pady=5)
+        self.left_notebook.add(self.session_panel, text="Session")
+
+        # Add notebook to horizontal pane
+        self.horizontal_paned.add(self.left_notebook, weight=0)
 
         # Center run panel
         self.run_panel = RunPanel(
@@ -153,8 +174,9 @@ class MainWindow:
         self.log_panel = LogPanel(bottom_container, height=8)
         self.log_panel.pack(fill="both", expand=True, padx=5, pady=5)
 
-        # Wire log panel to setup and command panels
+        # Wire log panel to setup, session, command panels
         self.setup_panel.log_panel = self.log_panel
+        self.session_panel.log_panel = self.log_panel
         self.command_panel.log_panel = self.log_panel
 
     def set_status(self, message, level="INFO"):
@@ -177,6 +199,13 @@ class MainWindow:
     def get_selected_instrument_id(self):
         """Return the currently selected instrument ID from SetupPanel."""
         return self.setup_panel.get_selected_instrument_id()
+
+    def on_session_created(self, session_file):
+        """Handle newly created session file."""
+        # Refresh setup panel session dropdown so new session appears.
+        if hasattr(self.setup_panel, "refresh_sessions"):
+            self.setup_panel.refresh_sessions()
+        self.log(f"Session file created: {session_file}", "SUCCESS")
 
     def run_selected_session(self):
         """Run the session selected in the setup panel."""
