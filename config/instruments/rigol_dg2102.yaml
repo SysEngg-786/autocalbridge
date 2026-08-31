@@ -1,0 +1,59 @@
+# File: config/instruments/rigol_dg2102.yaml
+# Path: /d/Projects/autocalbridge/config/instruments/rigol_dg2102.yaml
+# Purpose: Capability profile for Rigol DG2102 function/arbitrary waveform generator.
+#          Contains identity and minimal safe SCPI commands for initial
+#          connectivity, output control, and waveform configuration.
+#          Does NOT fix deployment role; role is assigned at runtime.
+
+# ============================================================
+# PROFILE AUTHENTICITY STATUS
+# ============================================================
+profile_status: placeholder_unverified
+
+source_document:
+  title: "DG2000 Series Programming Guide"
+  document_number: "PGB12100-1110"
+  version: "00.02.01"
+  url: ""
+  section: ""
+
+# ============================================================
+# INSTRUMENT IDENTITY
+# ============================================================
+vendor: Rigol
+model: "DG2102"
+idn: "Rigol Technologies,DG2102,DG2P233800961,00.02.06.00.01"
+
+# ============================================================
+# COMMAND RESPONSES
+# ============================================================
+# For physical devices, this section primarily defines allowed query commands
+# for policy enforcement. Actual responses come from the instrument.
+# For simulators, these would be the synthetic response values.
+# ============================================================
+responses:
+  "OUTP1?": "OFF"
+  "SOUR1:FUNC?": "SIN"
+  "SOUR1:FREQ?": "1000"
+  "SOUR1:VOLT?": "5.0"
+  "SOUR1:VOLT:OFFS?": "0.0"
+  "SOUR1:APPL?": "SIN,1.000000E+03,5.000000E+00,0.000000E+00,0.000000E+00"
+
+# ============================================================
+# WRITE COMMANDS
+# ============================================================
+# Common writes such as *RST and *CLS are handled centrally.
+# These command roots are allowed for physical and virtual DG2102 use.
+# Abbreviated forms are matched as roots by CommandPolicy.
+# ============================================================
+write_commands:
+  - "OUTP1"
+  - "SOUR1:FUNC"
+  - "SOUR1:FREQ"
+  - "SOUR1:VOLT"
+  - "SOUR1:VOLT:OFFS"
+  - "SOUR1:PHAS"
+  - "SOUR1:APPL:SIN"
+  - "SOUR1:APPL:SQU"
+  - "SOUR1:APPL:RAMP"
+  - "SOUR1:APPL:PULS"

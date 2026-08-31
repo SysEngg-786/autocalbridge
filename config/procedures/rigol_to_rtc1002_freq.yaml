@@ -1,0 +1,21 @@
+# File: config/procedures/rigol_to_rtc1002_freq.yaml
+# Path: /d/Projects/autocalbridge/config/procedures/rigol_to_rtc1002_freq.yaml
+# Purpose: Physical two-ended frequency comparison procedure.
+#          Rigol DG2102 source -> R&S RTC1002 DUT.
+
+procedure_id: rigol_to_rtc1002_freq
+label: DG2102 to RTC1002 frequency sweep
+source_command_template: "SOUR1:FREQ {value}"
+dut_query_command: "MEAS1:RES?"
+points:
+  - 1000
+  - 10000
+  - 100000
+  - 1000000
+  - 5000000
+tolerance: 0.5
+tolerance_type: relative
+metadata:
+  purpose: Concept validation physical frequency comparison
+  source_waveform: SIN
+  source_amplitude_vpp: 1.0

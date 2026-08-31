@@ -3,8 +3,9 @@
 # Purpose: Thin session runner that executes a calibration run from a session
 #          file, resolving instruments from the registry and procedure from
 #          the session's procedure reference.
-#          Supplies command policies and safety limits to the TestEngine so
-#          physical endpoints receive the same protection as simulators.
+#          Supplies command policies, safety limits, and transport configs to
+#          the TestEngine so physical endpoints receive the same protection
+#          and connection behavior as required.
 #          Activates a SessionContext so all structured logs during the run
 #          automatically carry session traceability fields.
 
@@ -21,14 +22,16 @@ It does not replace TestEngine yet. It:
 3. Resolves the procedure ID to a procedure file.
 4. Builds command policies from instrument profiles.
 5. Merges profile and registry safety limits for the source.
-6. Creates a SessionContext from the session config and activates it around
+6. Loads transport configs for physical entries.
+7. Creates a SessionContext from the session config and activates it around
    the actual run, so endpoint and engine logs include session fields.
-7. Creates a TestEngine.
-8. Connects source and DUT using resolved connection strings and policies.
-9. Sets source safety limits on the TestEngine.
-10. Runs the procedure with session traceability fields.
-11. Closes all endpoints.
-12. Returns results and errors for reporting.
+8. Creates a TestEngine.
+9. Connects source and DUT using resolved connection strings, policies, and
+   transport configs.
+10. Sets source safety limits on the TestEngine.
+11. Runs the procedure with session traceability fields.
+12. Closes all endpoints.
+13. Returns results and errors for reporting.
 
 The long-term target is to make TestEngine a thin procedure runner. That
 refactor belongs to later phases. This module currently owns the security
@@ -47,6 +50,7 @@ from src.core.procedure_config import load_procedure, ProcedureConfig
 from src.core.test_engine import TestEngine
 from security.policy_loader import build_policy_from_source
 from src.core.session_context import SessionContext, session_context
+from src.utils.transport_config import load_transport_config, TransportConfigError
 
 # Default directory containing procedure configuration files.
 PROCEDURES_DIR = "config/procedures"
@@ -97,6 +101,28 @@ def _build_policy_for_entry(entry):
         return None
 
     return build_policy_from_source(profile_path)
+
+
+def _load_transport_for_entry(entry):
+    """
+    Load a TransportConfig for a physical registry entry.
+
+    Args:
+        entry: InstrumentRegistryEntry instance.
+
+    Returns:
+        TransportConfig or None if entry has no transport or is virtual.
+    """
+    transport_name = getattr(entry, "transport", None)
+    if not transport_name:
+        return None
+
+    try:
+        return load_transport_config(transport_name)
+    except TransportConfigError as exc:
+        raise SessionRunnerError(
+            f"Failed to load transport config '{transport_name}': {exc}"
+        ) from exc
 
 
 def _load_profile_safety_limits(entry) -> Dict[str, Dict[str, float]]:
@@ -160,14 +186,11 @@ def _merge_safety_limits(
 
         prof = merged[root]
 
-        # Compare numeric min/max. Use None to represent unspecified bound.
         prof_min = prof.get("min")
         prof_max = prof.get("max")
         reg_min = reg_limits.get("min")
         reg_max = reg_limits.get("max")
 
-        # Narrowing check: registry min must be >= profile min,
-        # registry max must be <= profile max.
         if prof_min is not None and reg_min is not None and reg_min < prof_min:
             raise SessionRunnerError(
                 f"Registry safety limit for {root} min={reg_min} is wider than "
@@ -197,52 +220,32 @@ def run_session(session_file: str):
     - dut_id
     - procedure (procedure ID without .yaml)
 
-    The procedure file supplies points, tolerance, source command template,
-    and DUT query command. No hardcoded test points or tolerance remain in
-    the demo or runner.
-
-    Command policies are built from each instrument's capability profile and
-    supplied to the TestEngine. Safety limits are merged from profile and
-    registry and applied to the source.
-
-    A SessionContext is created and activated for the duration of the actual
-    instrument run, so all structured logs from endpoints and the TestEngine
-    automatically include session ID, operator, supervisor, and instrument
-    roles.
-
-    Results returned by TestEngine are canonical TestResult objects.
+    Command policies, safety limits, and transport configs are loaded and
+    supplied to the TestEngine. SessionContext is activated for the duration
+    of the run so logs carry traceability fields.
 
     Args:
         session_file: Path to a valid session YAML file.
 
     Returns:
         Tuple of (results, errors).
-        results: list of TestResult objects.
-        errors: list of error dictionaries from TestEngine.
-
-    Raises:
-        SessionRunnerError: If session load/resolve/procedure/connection/run fails.
     """
-    # 1. Load and validate the session file.
     try:
         session_config: SessionConfig = load_session(session_file)
     except Exception as exc:
         raise SessionRunnerError(f"Failed to load session file: {exc}") from exc
 
-    # 2. Resolve source and DUT registry entries.
     try:
         resolved = resolve_session(session_config)
     except Exception as exc:
         raise SessionRunnerError(f"Failed to resolve session instruments: {exc}") from exc
 
-    # 3. Resolve and load procedure from session reference.
     try:
         procedure_file = _resolve_procedure_file(session_config.procedure)
         procedure: ProcedureConfig = load_procedure(procedure_file)
     except Exception as exc:
         raise SessionRunnerError(f"Failed to load procedure: {exc}") from exc
 
-    # 4. Build command policies and safety limits.
     source_policy = _build_policy_for_entry(resolved.source_entry)
     dut_policy = _build_policy_for_entry(resolved.dut_entry)
 
@@ -253,7 +256,9 @@ def run_session(session_file: str):
         source_registry_limits,
     )
 
-    # 5. Create SessionContext for this run.
+    source_transport = _load_transport_for_entry(resolved.source_entry)
+    dut_transport = _load_transport_for_entry(resolved.dut_entry)
+
     session_ctx = SessionContext(
         session_id=session_config.session_id,
         operator=session_config.operator,
@@ -268,11 +273,11 @@ def run_session(session_file: str):
     engine.set_source_safety_limits(source_safety_limits)
 
     try:
-        # 6. Activate session context for all connection and run logs.
         with session_context(session_ctx):
             source_connected = engine.connect_source(
                 resolved.source_entry.connection,
                 command_policy=source_policy,
+                transport_config=source_transport,
             )
             if not source_connected:
                 raise SessionRunnerError(
@@ -282,14 +287,13 @@ def run_session(session_file: str):
             dut_connected = engine.connect_dut(
                 resolved.dut_entry.connection,
                 command_policy=dut_policy,
+                transport_config=dut_transport,
             )
             if not dut_connected:
                 raise SessionRunnerError(
                     f"Failed to connect DUT instrument: {resolved.dut_entry.id}"
                 )
 
-            # 7. Run the procedure-defined calibration sequence.
-            # Pass session traceability fields to result model.
             results = engine.run_procedure(
                 procedure=procedure,
                 operator_name=session_config.operator,
@@ -306,5 +310,4 @@ def run_session(session_file: str):
         raise SessionRunnerError(f"Session run failed: {exc}") from exc
 
     finally:
-        # 8. Always close endpoints, even on failure.
         engine.close()

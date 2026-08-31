@@ -1,0 +1,11 @@
+# File: config/transports/usbtmc.yaml
+# Path: /d/Projects/autocalbridge/config/transports/usbtmc.yaml
+# Purpose: Transport template for USB Test & Measurement Class (USBTMC) connections.
+#          Low-level parameters used by PyVisaEndpoint when an instrument
+#          registry entry selects transport: usbtmc.
+
+transport_name: usbtmc
+timeout_ms: 5000
+write_termination: "\n"
+read_termination: ""
+post_write_delay_ms: 200

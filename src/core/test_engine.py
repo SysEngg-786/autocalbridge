@@ -4,6 +4,7 @@
 #          error handling. Uses structured operational, audit, and security
 #          loggers so calibration execution is traceable with session context.
 #          Procedure-based execution returns canonical TestResult objects.
+#          Supports absolute and relative tolerance types.
 
 import time
 from datetime import datetime
@@ -32,7 +33,8 @@ class TestEngine:
 
     Connection is performed through connect_source() and connect_dut(), which
     create endpoints from implicit resource strings and optional command
-    policies. ACB does not branch on simulator vs physical instrument type.
+    policies and transport settings. ACB does not branch on simulator vs
+    physical instrument type.
 
     Calibration execution events are written to structured audit logs.
     Errors and lifecycle events go to operational logs. Safety violations
@@ -121,7 +123,13 @@ class TestEngine:
     # Connection Management
     # ========================================================================
 
-    def connect_source(self, address, timeout=5000, command_policy=None):
+    def connect_source(
+        self,
+        address,
+        timeout=5000,
+        command_policy=None,
+        transport_config=None,
+    ):
         """
         Connect to the source endpoint using an implicit resource string.
 
@@ -129,6 +137,7 @@ class TestEngine:
             address: Implicit endpoint resource string.
             timeout: Timeout in milliseconds.
             command_policy: Optional CommandPolicy for physical endpoints.
+            transport_config: Optional TransportConfig for physical endpoints.
 
         Returns:
             bool: True if connected, False on failure.
@@ -138,6 +147,7 @@ class TestEngine:
                 address,
                 self.visa_manager,
                 command_policy=command_policy,
+                transport_config=transport_config,
             )
             endpoint.open(address, timeout)
         except InstrumentEndpointError as exc:
@@ -171,7 +181,13 @@ class TestEngine:
         )
         return True
 
-    def connect_dut(self, address, timeout=5000, command_policy=None):
+    def connect_dut(
+        self,
+        address,
+        timeout=5000,
+        command_policy=None,
+        transport_config=None,
+    ):
         """
         Connect to the DUT endpoint using an implicit resource string.
 
@@ -179,6 +195,7 @@ class TestEngine:
             address: Implicit endpoint resource string.
             timeout: Timeout in milliseconds.
             command_policy: Optional CommandPolicy for physical endpoints.
+            transport_config: Optional TransportConfig for physical endpoints.
 
         Returns:
             bool: True if connected, False on failure.
@@ -188,6 +205,7 @@ class TestEngine:
                 address,
                 self.visa_manager,
                 command_policy=command_policy,
+                transport_config=transport_config,
             )
             endpoint.open(address, timeout)
         except InstrumentEndpointError as exc:
@@ -597,7 +615,8 @@ class TestEngine:
 
         Safety limits are enforced before source commands are sent.
 
-        Results are returned as canonical TestResult objects.
+        Results are returned as canonical TestResult objects. Tolerance type
+        is taken from the procedure and applied by TestResult.
 
         Args:
             procedure: ProcedureConfig object.
@@ -634,6 +653,7 @@ class TestEngine:
                 "operator": operator_name,
                 "point_count": len(procedure.points),
                 "tolerance": procedure.tolerance,
+                "tolerance_type": procedure.tolerance_type,
                 "source_command_template": procedure.source_command_template,
                 "dut_query_command": procedure.dut_query_command,
             },
@@ -709,9 +729,6 @@ class TestEngine:
                     break
                 continue
 
-            error = abs(measured - target)
-            status = "PASS" if error <= procedure.tolerance else "FAIL"
-
             result = TestResult(
                 target_value=target,
                 measured_value=measured,
@@ -722,6 +739,7 @@ class TestEngine:
                 procedure_id=procedure.procedure_id,
                 source_id=source_id,
                 dut_id=dut_id,
+                tolerance_type=procedure.tolerance_type,
                 metadata={
                     "source_command": source_command,
                     "dut_query_command": procedure.dut_query_command,
@@ -734,10 +752,11 @@ class TestEngine:
                 extra={
                     "event_type": "point_result",
                     "procedure_id": procedure.procedure_id,
-                    "target": target,
-                    "measured": measured,
-                    "error": round(error, 4),
-                    "status": status,
+                    "target": result.target_value,
+                    "measured": result.measured_value,
+                    "error": result.error,
+                    "error_percent": result.error_percent,
+                    "status": result.status,
                 },
             )
 

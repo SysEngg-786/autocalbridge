@@ -1,0 +1,14 @@
+# File: config/sessions/session-rigol-rtc1002-freq.yaml
+# Path: /d/Projects/autocalbridge/config/sessions/session-rigol-rtc1002-freq.yaml
+# Purpose: Physical frequency sweep session for DG2102 -> RTC1002.
+
+session_id: session-rigol-rtc1002-freq
+label: DG2102 to RTC1002 frequency sweep
+operator: Demo_Operator
+supervisor: Lab_Supervisor
+source_id: rigol_dg2102_usb
+dut_id: rtc1002-lab1
+procedure: rigol_to_rtc1002_freq
+metadata:
+  site: Lab A
+  purpose: Physical two-ended frequency comparison

@@ -13,6 +13,7 @@ ALLOWED_ENTRY_FIELDS = {
     "kind",
     "display_name",
     "connection",
+    "transport",
     "role",
     "safety_limits",
     "metadata",

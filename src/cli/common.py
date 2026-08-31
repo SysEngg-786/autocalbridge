@@ -4,6 +4,7 @@
 #          Keeps registry lookup and endpoint opening in one place so
 #          command implementations stay small and consistent.
 #          Builds command policies for physical endpoints from profiles.
+#          Loads transport config for physical entries when transport is set.
 
 import os
 import sys
@@ -18,6 +19,7 @@ from src.utils.instrument_registry import load_registry
 from src.utils.registry_validator import RegistryValidationError
 from src.core.endpoints.endpoint_factory import create_from_resource_string
 from src.core.endpoints.instrument_endpoint import InstrumentEndpointError
+from src.utils.transport_config import load_transport_config, TransportConfigError
 from security.policy_loader import build_policy_from_source
 
 # Directory containing instrument capability profiles.
@@ -59,19 +61,24 @@ def open_endpoint_for_entry(entry, timeout_ms=5000):
     Uses the standard endpoint factory so the same path works for
     physical and virtual instruments.
 
-    A command policy is built from the entry's capability profile and
-    supplied for physical endpoints. Simulator endpoints build their own
-    policy inside the factory and ignore the passed policy.
+    For physical endpoints:
+    - A command policy is built from the entry's capability profile.
+    - If the entry has a `transport`, the corresponding transport config
+      is loaded and supplied to the endpoint.
+
+    Simulator endpoints build their own policy inside the factory and
+    ignore the passed policy/transport config.
 
     Args:
         entry: InstrumentRegistryEntry instance.
-        timeout_ms: Operation timeout in milliseconds.
+        timeout_ms: Fallback operation timeout in milliseconds.
 
     Returns:
         Opened InstrumentEndpoint.
 
     Raises:
-        InstrumentEndpointError: If factory or open fails.
+        InstrumentEndpointError: If factory or open fails, or if transport
+            config cannot be loaded.
     """
     resource_string = entry.connection
 
@@ -81,9 +88,23 @@ def open_endpoint_for_entry(entry, timeout_ms=5000):
     if os.path.isfile(profile_path):
         command_policy = build_policy_from_source(profile_path)
 
+    # Load transport config if the registry entry specifies one.
+    transport_config = None
+    if getattr(entry, "transport", None):
+        try:
+            transport_config = load_transport_config(entry.transport)
+        except TransportConfigError as exc:
+            raise InstrumentEndpointError(
+                f"Failed to load transport config '{entry.transport}': {exc}",
+                endpoint_type="visa",
+                resource_string=resource_string,
+                cause=exc,
+            ) from exc
+
     endpoint = create_from_resource_string(
         resource_string,
         command_policy=command_policy,
+        transport_config=transport_config,
     )
     endpoint.open(resource_string, timeout_ms=timeout_ms)
     return endpoint

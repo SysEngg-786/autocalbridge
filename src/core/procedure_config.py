@@ -3,6 +3,7 @@
 # Purpose: Load and normalize AutoCalBridge calibration procedure files.
 #          A procedure defines the commands, points, and tolerance for one
 #          calibration run, independent of the instruments themselves.
+#          Supports absolute and relative tolerance types.
 
 """
 Procedure configuration loader.
@@ -31,9 +32,9 @@ class ProcedureConfig:
     """
     Normalized view of one calibration procedure.
 
-    This object carries the command templates, points, and tolerance.
-    It is immutable after creation to preserve the original procedure
-    definition for traceability.
+    This object carries the command templates, points, tolerance, and
+    tolerance type. It is immutable after creation to preserve the original
+    procedure definition for traceability.
     """
 
     def __init__(
@@ -43,6 +44,7 @@ class ProcedureConfig:
         dut_query_command: str,
         points: List[float],
         tolerance: float,
+        tolerance_type: str = "absolute",
         label: Optional[str] = None,
         sync: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
@@ -52,6 +54,7 @@ class ProcedureConfig:
         self.dut_query_command = dut_query_command
         self.points = list(points)
         self.tolerance = float(tolerance)
+        self.tolerance_type = tolerance_type.strip().lower()
         self.label = label or ""
         self.sync = sync or {}
         self.metadata = metadata or {}
@@ -65,6 +68,7 @@ class ProcedureConfig:
             "dut_query_command": self.dut_query_command,
             "points": list(self.points),
             "tolerance": self.tolerance,
+            "tolerance_type": self.tolerance_type,
             "sync": dict(self.sync),
             "metadata": dict(self.metadata),
         }
@@ -94,12 +98,18 @@ def load_procedure(procedure_file: str) -> ProcedureConfig:
     # procedure object.
     validate_procedure_data(data)
 
+    tolerance_type = data.get("tolerance_type", "absolute")
+    if not isinstance(tolerance_type, str):
+        tolerance_type = "absolute"
+    tolerance_type = tolerance_type.strip().lower()
+
     return ProcedureConfig(
         procedure_id=data.get("procedure_id", ""),
         source_command_template=data.get("source_command_template", ""),
         dut_query_command=data.get("dut_query_command", ""),
         points=data.get("points", []),
         tolerance=data.get("tolerance", 0.0),
+        tolerance_type=tolerance_type,
         label=data.get("label"),
         sync=data.get("sync"),
         metadata=data.get("metadata"),

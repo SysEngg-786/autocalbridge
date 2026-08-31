@@ -3,8 +3,9 @@
 # Purpose: InstrumentEndpoint adapter for physical PyVISA instruments.
 #          Includes structured operational and audit logging with session
 #          context automatically attached when active.
-#          Optional CommandPolicy enforcement is supported so physical and
-#          simulator endpoints share one security seam.
+#          Optional CommandPolicy enforcement and TransportConfig support
+#          so physical endpoints share the same security seam as simulators
+#          and respect device-specific connection settings.
 
 """
 PyVISA endpoint adapter.
@@ -31,8 +32,14 @@ An optional CommandPolicy may be supplied at construction time. If present,
 write and query commands are validated before they reach the VISA resource.
 This gives physical endpoints the same command allowlist protection as
 simulator endpoints.
+
+An optional TransportConfig may be supplied at construction time. If present,
+its timeout, write termination, read termination, and post-write delay are
+applied to the PyVISA resource after opening. This allows device-specific
+connection behavior without hardcoding.
 """
 
+import time
 from typing import Optional
 
 from .instrument_endpoint import InstrumentEndpoint, InstrumentEndpointError
@@ -49,6 +56,9 @@ from src.utils.structured_logger import get_operational_logger, get_audit_logger
 # without policy data remain compatible.
 from security.command_policy import CommandPolicy
 
+# TransportConfig supplies low-level connection parameters.
+from src.utils.transport_config import TransportConfig
+
 
 class PyVisaEndpoint(InstrumentEndpoint):
     """
@@ -62,6 +72,7 @@ class PyVisaEndpoint(InstrumentEndpoint):
         self,
         visa_manager: Optional[VisaManager] = None,
         command_policy: Optional[CommandPolicy] = None,
+        transport_config: Optional[TransportConfig] = None,
     ) -> None:
         """
         Initialise the PyVISA endpoint.
@@ -74,6 +85,9 @@ class PyVisaEndpoint(InstrumentEndpoint):
             command_policy: Optional CommandPolicy instance. If supplied, all
                 write and query commands are validated before being sent to
                 the physical instrument.
+            transport_config: Optional TransportConfig instance. If supplied,
+                its timeout, write termination, read termination, and
+                post-write delay are applied to the opened VISA resource.
         """
         self._visa_manager = visa_manager if visa_manager is not None else VisaManager()
         self._resource = None
@@ -81,6 +95,8 @@ class PyVisaEndpoint(InstrumentEndpoint):
         self._resource_string: Optional[str] = None
         self._timeout_ms: int = 5000
         self._command_policy: Optional[CommandPolicy] = command_policy
+        self._transport_config: Optional[TransportConfig] = transport_config
+        self._post_write_delay_ms: int = 0
 
         self._operational_logger = get_operational_logger()
         self._audit_logger = get_audit_logger()
@@ -93,10 +109,14 @@ class PyVisaEndpoint(InstrumentEndpoint):
         """
         Open a physical VISA instrument resource.
 
+        If a TransportConfig is present, its settings are applied to the
+        resource after opening.
+
         Args:
             resource_string: VISA resource string, e.g.
                 "TCPIP0::192.168.1.50::inst0::INSTR".
-            timeout_ms: Communication timeout in milliseconds.
+            timeout_ms: Fallback timeout in milliseconds. If a transport
+                config supplies a timeout, that value is used instead.
 
         Raises:
             InstrumentEndpointError: If the resource string is empty, or the
@@ -163,6 +183,10 @@ class PyVisaEndpoint(InstrumentEndpoint):
             )
 
         self._resource = resource
+
+        # Apply transport-specific settings if provided.
+        self._apply_transport_config()
+
         self._operational_logger.info(
             "VISA endpoint opened",
             extra={
@@ -178,6 +202,9 @@ class PyVisaEndpoint(InstrumentEndpoint):
         If a CommandPolicy is present, the command is validated first. Invalid
         commands are rejected with a controlled InstrumentEndpointError.
 
+        If post_write_delay_ms is configured, the method waits after writing
+        before returning, allowing the instrument to process the command.
+
         Args:
             command: One SCPI or vendor command string.
 
@@ -188,8 +215,6 @@ class PyVisaEndpoint(InstrumentEndpoint):
         self._ensure_ready()
         self._validate_command(command)
 
-        # Audit log every write command. This is the calibration traceability
-        # record and must not be omitted.
         self._audit_logger.info(
             "VISA write",
             extra={
@@ -201,6 +226,8 @@ class PyVisaEndpoint(InstrumentEndpoint):
 
         try:
             self._resource.write(command)
+            if self._post_write_delay_ms > 0:
+                time.sleep(self._post_write_delay_ms / 1000.0)
         except Exception as exc:
             self._audit_logger.error(
                 "VISA write failed",
@@ -224,6 +251,9 @@ class PyVisaEndpoint(InstrumentEndpoint):
 
         If a CommandPolicy is present, the command is validated first. Invalid
         queries are rejected with a controlled InstrumentEndpointError.
+
+        If post_write_delay_ms is configured, the method waits after writing
+        before reading the response.
 
         Args:
             command: One query string, e.g. "*IDN?".
@@ -249,7 +279,10 @@ class PyVisaEndpoint(InstrumentEndpoint):
         )
 
         try:
-            response = self._resource.query(command)
+            self._resource.write(command)
+            if self._post_write_delay_ms > 0:
+                time.sleep(self._post_write_delay_ms / 1000.0)
+            response = self._resource.read()
         except Exception as exc:
             self._audit_logger.error(
                 "VISA query failed",
@@ -270,9 +303,6 @@ class PyVisaEndpoint(InstrumentEndpoint):
         if response is None:
             response_text = ""
         else:
-            # Strip only trailing carriage return and line feed characters.
-            # This keeps audit logs and returned values clean without
-            # removing meaningful leading/trailing spaces.
             response_text = str(response).rstrip("\r\n")
 
         self._audit_logger.info(
@@ -315,9 +345,6 @@ class PyVisaEndpoint(InstrumentEndpoint):
         try:
             self._visa_manager.close_instrument(tag)
         except Exception as exc:
-            # close() is intended to be safe and idempotent. The error is
-            # wrapped for internal visibility, not re-raised, because callers
-            # often call close() during cleanup.
             self._operational_logger.error(
                 "VISA close failed",
                 extra={
@@ -336,6 +363,27 @@ class PyVisaEndpoint(InstrumentEndpoint):
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _apply_transport_config(self) -> None:
+        """
+        Apply transport-specific settings to the opened VISA resource.
+
+        The values come from the optional TransportConfig provided at
+        construction time. No settings are applied if the config is None.
+        """
+        if self._transport_config is None:
+            return
+
+        if self._transport_config.timeout_ms:
+            self._resource.timeout = self._transport_config.timeout_ms
+
+        if self._transport_config.write_termination is not None:
+            self._resource.write_termination = self._transport_config.write_termination
+
+        if self._transport_config.read_termination is not None:
+            self._resource.read_termination = self._transport_config.read_termination
+
+        self._post_write_delay_ms = int(self._transport_config.post_write_delay_ms or 0)
 
     def _ensure_ready(self) -> None:
         """

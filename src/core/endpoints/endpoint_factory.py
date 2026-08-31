@@ -1,8 +1,8 @@
 # File: src/core/endpoints/endpoint_factory.py
 # Path: /d/Projects/autocalbridge/src/core/endpoints/endpoint_factory.py
 # Purpose: Config-driven and resource-string-driven factory for creating
-#          instrument endpoints. Supports optional CommandPolicy for physical
-#          endpoints so they share the same security seam as simulators.
+#          instrument endpoints. Supports optional CommandPolicy and
+#          TransportConfig for physical endpoints.
 
 """
 Endpoint factory.
@@ -40,8 +40,8 @@ simulator and a DUT simulator. ACB never sees or manages this context.
 
 Simulator endpoints created from YAML profiles also receive a CommandPolicy
 built from the same profile. Physical endpoints may receive a CommandPolicy
-passed by the caller. This applies security validation at the endpoint boundary
-without placing command data in ACB code.
+passed by the caller, and optionally a TransportConfig for device-specific
+connection behavior.
 """
 
 from typing import Any, Dict, Optional
@@ -80,7 +80,8 @@ def create(config: Dict[str, Any]) -> InstrumentEndpoint:
         {
             "type": "visa",
             "visa_manager": optional_shared_visa_manager,
-            "command_policy": optional_command_policy
+            "command_policy": optional_command_policy,
+            "transport_config": optional_transport_config
         }
 
     Args:
@@ -117,6 +118,7 @@ def create_from_resource_string(
     resource_string: str,
     visa_manager: Optional[Any] = None,
     command_policy: Optional[Any] = None,
+    transport_config: Optional[Any] = None,
 ) -> InstrumentEndpoint:
     """
     Create an instrument endpoint from an implicit resource string.
@@ -145,6 +147,10 @@ def create_from_resource_string(
             Optional CommandPolicy. Used only when the resource string is
             interpreted as a physical VISA endpoint. Simulator endpoints build
             their policy from the profile automatically.
+
+        transport_config:
+            Optional TransportConfig. Used only when the resource string is
+            interpreted as a physical VISA endpoint.
 
     Returns:
         InstrumentEndpoint: Unopened endpoint instance.
@@ -185,6 +191,7 @@ def create_from_resource_string(
             "type": "visa",
             "visa_manager": visa_manager,
             "command_policy": command_policy,
+            "transport_config": transport_config,
         }
     )
 
@@ -276,9 +283,11 @@ def _create_visa_endpoint(config: Dict[str, Any]) -> PyVisaEndpoint:
     An optional CommandPolicy may be supplied through:
         config["command_policy"]
 
-    If no policy is supplied, the endpoint behaves as before and performs no
-    command validation. Callers that operate through session/registry should
-    supply a policy built from the instrument profile.
+    An optional TransportConfig may be supplied through:
+        config["transport_config"]
+
+    If no transport config is supplied, the endpoint uses default VISA
+    termination and timeout behavior.
 
     Args:
         config: Endpoint configuration.
@@ -288,8 +297,10 @@ def _create_visa_endpoint(config: Dict[str, Any]) -> PyVisaEndpoint:
     """
     visa_manager = config.get("visa_manager")
     command_policy = config.get("command_policy")
+    transport_config = config.get("transport_config")
 
     return PyVisaEndpoint(
         visa_manager,
         command_policy=command_policy,
+        transport_config=transport_config,
     )

@@ -2,6 +2,7 @@
 # Path: /d/Projects/autocalbridge/src/core/procedure_validator.py
 # Purpose: Validation rules for AutoCalBridge calibration procedure files.
 #          Separated from the loader to keep validation modular.
+#          Supports absolute and relative tolerance types.
 
 ALLOWED_PROCEDURE_FIELDS = {
     "procedure_id",
@@ -10,9 +11,12 @@ ALLOWED_PROCEDURE_FIELDS = {
     "dut_query_command",
     "points",
     "tolerance",
+    "tolerance_type",
     "sync",
     "metadata",
 }
+
+ALLOWED_TOLERANCE_TYPES = {"absolute", "relative"}
 
 
 class ProcedureValidationError(Exception):
@@ -72,6 +76,16 @@ def validate_procedure_data(data):
         errors.append("Field 'tolerance' must be a number.")
     elif tolerance <= 0:
         errors.append("Field 'tolerance' must be greater than zero.")
+
+    # tolerance_type must be one of the allowed values if present.
+    tolerance_type = data.get("tolerance_type")
+    if tolerance_type is not None:
+        if not isinstance(tolerance_type, str):
+            errors.append("Field 'tolerance_type' must be a string.")
+        elif tolerance_type.strip().lower() not in ALLOWED_TOLERANCE_TYPES:
+            errors.append(
+                f"Field 'tolerance_type' must be one of {sorted(ALLOWED_TOLERANCE_TYPES)}."
+            )
 
     # Optional label must be string if present.
     if "label" in data and not isinstance(data["label"], str):

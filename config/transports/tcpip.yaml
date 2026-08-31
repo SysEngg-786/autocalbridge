@@ -1,0 +1,11 @@
+# File: config/transports/tcpip.yaml
+# Path: /d/Projects/autocalbridge/config/transports/tcpip.yaml
+# Purpose: Transport template for TCP/IP LAN (VXI-11) connections.
+#          Low-level parameters used by PyVisaEndpoint when an instrument
+#          registry entry selects transport: tcpip.
+
+transport_name: tcpip
+timeout_ms: 5000
+write_termination: "\n"
+read_termination: "\n"
+post_write_delay_ms: 0

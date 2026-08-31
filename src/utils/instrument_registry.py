@@ -3,6 +3,7 @@
 # Purpose: Load and normalize the AutoCalBridge instrument registry.
 #          Delegates validation to registry_validator to keep loading and
 #          rule enforcement separate.
+#          Includes transport field for physical instrument entries.
 
 import os
 import yaml
@@ -30,6 +31,7 @@ class InstrumentRegistryEntry:
         self.kind = raw_entry.get("kind")
         self.display_name = raw_entry.get("display_name")
         self.connection = raw_entry.get("connection")
+        self.transport = raw_entry.get("transport", "")
         self.role = raw_entry.get("role", "any")
         self.safety_limits = raw_entry.get("safety_limits", {})
         self.metadata = raw_entry.get("metadata", {})
@@ -42,6 +44,7 @@ class InstrumentRegistryEntry:
             "kind": self.kind,
             "display_name": self.display_name,
             "connection": self.connection,
+            "transport": self.transport,
             "role": self.role,
             "safety_limits": self.safety_limits,
             "metadata": self.metadata,

@@ -3,6 +3,8 @@
 # Purpose: Capability profile for R&S RTC1002 oscilloscope.
 #          Contains identity and basic SCPI commands for connectivity,
 #          visual verification, and safe control.
+#          Includes measurement setup and result query commands for
+#          digital comparison during concept validation.
 #          Does NOT fix deployment role; role is assigned at runtime.
 
 # ============================================================
@@ -33,6 +35,7 @@ idn: "Rohde&Schwarz,RTC1002,0000000000000,00.000"
 responses:
   "SYST:ERR:ALL?": "0,\"No error\""
   "CHAN1:SCAL?": "5.00E-03"
+  "MEAS1:RES?": ""
 
 # ============================================================
 # WRITE COMMANDS
@@ -51,6 +54,7 @@ write_commands:
   - "TIM:POS"
   - "MEAS1:ENAB"
   - "MEAS1:MAIN"
+  - "MEAS1:SOUR"
   - "CURS1:STAT"
   - "CURS1:FUNC"
   - "AUT"

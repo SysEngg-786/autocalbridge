@@ -3,6 +3,7 @@
 # Purpose: Canonical data model for a single calibration test result.
 #          Used by TestEngine, session runner, and report generator so
 #          results have one stable traceable schema across the system.
+#          Supports absolute and relative tolerance types.
 
 """
 Canonical test result model.
@@ -19,7 +20,9 @@ It contains all traceability fields required for calibration records:
 - target
 - measured
 - error
+- error_percent
 - tolerance
+- tolerance_type
 - status
 - timestamp
 - metadata
@@ -51,6 +54,7 @@ class TestResult:
         procedure_id: str = "",
         source_id: str = "",
         dut_id: str = "",
+        tolerance_type: str = "absolute",
         metadata: Optional[Dict[str, Any]] = None,
         timestamp: Optional[str] = None,
     ) -> None:
@@ -61,12 +65,15 @@ class TestResult:
             target_value: Expected or stimulus value.
             measured_value: Actual measured value.
             tolerance: PASS/FAIL tolerance.
+                - Absolute: value in measurement units, e.g. 500 Hz.
+                - Relative: percentage, e.g. 2 means 2%.
             operator: Operator identifier.
             session_id: Session identifier from session config.
             supervisor: Optional supervisor identifier.
             procedure_id: Procedure identifier.
             source_id: Registry ID of source instrument.
             dut_id: Registry ID of DUT instrument.
+            tolerance_type: "absolute" or "relative".
             metadata: Optional free-form metadata mapping.
             timestamp: Optional explicit timestamp. If not supplied,
                 current UTC time in "%Y-%m-%d %H:%M:%S" format is used.
@@ -74,6 +81,7 @@ class TestResult:
         self.target_value = float(target_value)
         self.measured_value = float(measured_value)
         self.tolerance = float(tolerance)
+        self.tolerance_type = tolerance_type.strip().lower()
         self.operator = operator
         self.session_id = session_id
         self.supervisor = supervisor or ""
@@ -84,7 +92,20 @@ class TestResult:
 
         # Calculate error and status deterministically.
         self.error = abs(self.measured_value - self.target_value)
-        self.status = "PASS" if self.error <= self.tolerance else "FAIL"
+
+        # Percentage error. Guard against division by zero for zero target.
+        if abs(self.target_value) > 1e-12:
+            self.error_percent = (self.error / abs(self.target_value)) * 100.0
+        else:
+            self.error_percent = 0.0
+
+        # Determine PASS/FAIL based on tolerance type.
+        if self.tolerance_type == "relative":
+            allowed_error = (self.tolerance / 100.0) * abs(self.target_value)
+        else:
+            allowed_error = self.tolerance
+
+        self.status = "PASS" if self.error <= allowed_error else "FAIL"
 
         if timestamp is None:
             self.timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -109,7 +130,9 @@ class TestResult:
             "Target": self.target_value,
             "Measured": self.measured_value,
             "Error": round(self.error, 4),
+            "ErrorPercent": round(self.error_percent, 4),
             "Tolerance": self.tolerance,
+            "ToleranceType": self.tolerance_type,
             "Status": self.status,
             "Metadata": self.metadata,
         }
