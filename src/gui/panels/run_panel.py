@@ -3,14 +3,21 @@
 # Purpose: Active run panel with run control and future manual entry area.
 #          Includes session run, physical frequency verification, and
 #          waveform spot check actions.
-#          Uses raised 3D-style buttons for primary actions.
+#          Actions run in background threads so animation stays responsive.
 
+import time
 import tkinter as tk
 from tkinter import ttk
+
+from src.gui.threading_utils import run_in_background
 
 
 class RunPanel(ttk.Frame):
     """Center panel for live run status and run actions."""
+
+    MIN_PROGRESS_VISIBLE_SECONDS = 0.8
+    BANNER_DURATION_MS = 6000
+    ANIMATION_INTERVAL_MS = 350
 
     def __init__(
         self,
@@ -28,6 +35,9 @@ class RunPanel(ttk.Frame):
         self.is_running = False
         self.is_verifying = False
         self.is_spot_checking = False
+        self._banner_after_id = None
+        self._animation_after_id = None
+        self._animation_dots = 0
 
         self.create_widgets()
 
@@ -53,7 +63,19 @@ class RunPanel(ttk.Frame):
 
         self.status_var = tk.StringVar(value="Ready")
         status_label = ttk.Label(self, textvariable=self.status_var, foreground="#666666")
-        status_label.pack(anchor="w", pady=(0, 8))
+        status_label.pack(anchor="w", pady=(0, 5))
+
+        # Indeterminate progress bar, hidden until a run action starts.
+        self.progress = ttk.Progressbar(self, mode="indeterminate", length=280)
+
+        # Animated running-dot label, hidden by default.
+        self.animation_label = tk.Label(
+            self,
+            text="",
+            fg="#003366",
+            font=("Segoe UI", 11, "bold"),
+            anchor="w",
+        )
 
         # Session run button
         self.run_button = self._create_action_button(
@@ -98,7 +120,6 @@ class RunPanel(ttk.Frame):
             row=2, column=1, sticky="w", pady=2, padx=(5, 0)
         )
 
-        # Spot check button beside amplitude field, slightly separated.
         self.spot_check_button = self._create_action_button(
             spot_frame,
             text="Run Spot Check",
@@ -112,6 +133,20 @@ class RunPanel(ttk.Frame):
             row=3, column=1, sticky="w", pady=2, padx=(5, 0)
         )
 
+        # Inline completion banner below all action controls.
+        self.banner_label = tk.Label(
+            self,
+            text="",
+            bg="#ffffff",
+            fg="#000000",
+            anchor="center",
+            padx=8,
+            pady=6,
+            font=("Segoe UI", 11, "bold"),
+            bd=2,
+            relief="solid",
+        )
+
         # Future manual entry area placeholder
         manual_frame = ttk.LabelFrame(self, text="Manual Entry", padding=8)
         manual_frame.pack(fill="both", expand=True, pady=(8, 0))
@@ -122,8 +157,90 @@ class RunPanel(ttk.Frame):
             foreground="#888888",
         ).pack(anchor="w")
 
+    def start_progress(self):
+        """Show and start progress bar plus animated running dots."""
+        if not self.progress.winfo_manager():
+            self.progress.pack(fill="x", pady=(0, 5))
+        self.progress.start(12)
+
+        self._animation_dots = 0
+        if not self.animation_label.winfo_manager():
+            self.animation_label.pack(anchor="w", pady=(0, 5))
+        self._animate_dots()
+
+    def _animate_dots(self):
+        """Animate a running dots indicator."""
+        self._animation_dots = (self._animation_dots % 3) + 1
+        dots = "." * self._animation_dots
+        self.animation_label.config(text=f"Running{dots}")
+        self._animation_after_id = self.after(
+            self.ANIMATION_INTERVAL_MS,
+            self._animate_dots,
+        )
+
+    def stop_progress(self):
+        """Stop and hide progress bar and animation."""
+        self.progress.stop()
+
+        if self._animation_after_id is not None:
+            try:
+                self.after_cancel(self._animation_after_id)
+            except Exception:
+                pass
+            self._animation_after_id = None
+
+        if self.animation_label.winfo_manager():
+            self.animation_label.pack_forget()
+
+        elapsed = 0.0
+        step = 0.02
+        while elapsed < self.MIN_PROGRESS_VISIBLE_SECONDS:
+            self.update_idletasks()
+            time.sleep(step)
+            elapsed += step
+
+        if self.progress.winfo_manager():
+            self.progress.pack_forget()
+
+    def show_banner(self, message, level="SUCCESS"):
+        """Show an inline banner below the action buttons."""
+        colors = {
+            "SUCCESS": "#d9f2d9",
+            "ERROR": "#f2d9d9",
+        }
+        fg = {
+            "SUCCESS": "#006600",
+            "ERROR": "#990000",
+        }.get(level, "#000000")
+
+        bg = colors.get(level, "#ffffff")
+
+        if self._banner_after_id is not None:
+            try:
+                self.after_cancel(self._banner_after_id)
+            except Exception:
+                pass
+            self._banner_after_id = None
+
+        self.banner_label.config(
+            text=message,
+            bg=bg,
+            fg=fg,
+        )
+        self.banner_label.pack(fill="x", pady=(0, 5))
+
+        self._banner_after_id = self.after(
+            self.BANNER_DURATION_MS,
+            self.hide_banner,
+        )
+
+    def hide_banner(self):
+        """Hide the inline completion banner."""
+        self.banner_label.pack_forget()
+        self._banner_after_id = None
+
     def do_run(self):
-        """Invoke the session run callback if not already busy."""
+        """Invoke the session run callback in background."""
         if self.is_running or self.is_verifying or self.is_spot_checking:
             return
 
@@ -132,13 +249,26 @@ class RunPanel(ttk.Frame):
             return
 
         self.set_running(True)
-        try:
-            self.on_run_callback()
-        finally:
+        self.start_progress()
+
+        def done(_result):
+            self.stop_progress()
             self.set_running(False)
 
+        def error(exc):
+            self.stop_progress()
+            self.set_running(False)
+            self.show_banner(f"Run failed: {exc}", "ERROR")
+
+        run_in_background(
+            self,
+            self.on_run_callback,
+            on_success=done,
+            on_error=error,
+        )
+
     def do_verification(self):
-        """Invoke the physical verification callback if not already busy."""
+        """Invoke physical verification callback in background."""
         if self.is_running or self.is_verifying or self.is_spot_checking:
             return
 
@@ -147,13 +277,26 @@ class RunPanel(ttk.Frame):
             return
 
         self.set_verifying(True)
-        try:
-            self.on_verification_callback()
-        finally:
+        self.start_progress()
+
+        def done(_result):
+            self.stop_progress()
             self.set_verifying(False)
 
+        def error(exc):
+            self.stop_progress()
+            self.set_verifying(False)
+            self.show_banner(f"Verification failed: {exc}", "ERROR")
+
+        run_in_background(
+            self,
+            self.on_verification_callback,
+            on_success=done,
+            on_error=error,
+        )
+
     def do_spot_check(self):
-        """Invoke the waveform spot check callback if not already busy."""
+        """Invoke waveform spot check callback in background."""
         if self.is_running or self.is_verifying or self.is_spot_checking:
             return
 
@@ -162,10 +305,23 @@ class RunPanel(ttk.Frame):
             return
 
         self.set_spot_checking(True)
-        try:
-            self.on_spot_check_callback()
-        finally:
+        self.start_progress()
+
+        def done(_result):
+            self.stop_progress()
             self.set_spot_checking(False)
+
+        def error(exc):
+            self.stop_progress()
+            self.set_spot_checking(False)
+            self.show_banner(f"Spot check failed: {exc}", "ERROR")
+
+        run_in_background(
+            self,
+            self.on_spot_check_callback,
+            on_success=done,
+            on_error=error,
+        )
 
     def set_running(self, running):
         self.is_running = running

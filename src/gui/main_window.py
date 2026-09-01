@@ -5,7 +5,7 @@
 #          Left notebook contains Instrument and Session tabs.
 #          Right results panel, bottom command+log area remain unchanged.
 #          Includes physical frequency verification and waveform spot check.
-#          Results panel has higher weight for demo emphasis.
+#          Adds non-blocking completion banner with soft beep feedback.
 
 import os
 import tkinter as tk
@@ -31,13 +31,14 @@ from src.utils.structured_logger import setup_logging
 class MainWindow:
     """Main window for AutoCalBridge GUI."""
 
+    BANNER_DURATION_MS = 8000
+
     def __init__(self, root):
         self.root = root
         self.root.title("AutoCalBridge (ACB)")
         self.root.geometry("1200x720")
         self.root.configure(bg="#f4f6f9")
 
-        # Initialize structured logging once for the application.
         setup_logging()
 
         self.style = ttk.Style()
@@ -54,8 +55,8 @@ class MainWindow:
             padding=8,
         )
 
-        # Default session panel mode. Later can be toggled from UI or launch.
         self.session_panel_mode = "operator"
+        self._banner_after_id = None
 
         self.create_layout()
 
@@ -76,7 +77,6 @@ class MainWindow:
         )
         ribbon_title.pack(side="left")
 
-        # Exit button on top right
         self.exit_button = tk.Button(
             self.top_ribbon,
             text="Exit",
@@ -104,11 +104,24 @@ class MainWindow:
         )
         self.status_display.pack(side="top", fill="x")
 
+        # Completion banner label, initially hidden.
+        self.banner_label = tk.Label(
+            self.root,
+            text="",
+            bg="#ffffff",
+            fg="#000000",
+            anchor="center",
+            padx=10,
+            pady=8,
+            font=("Segoe UI", 12, "bold"),
+            bd=2,
+            relief="solid",
+        )
+
         # Main vertical paned window: main work area vs bottom log area
         self.vertical_paned = ttk.PanedWindow(self.root, orient="vertical")
         self.vertical_paned.pack(fill="both", expand=True)
 
-        # Top horizontal paned window: left notebook | center | results
         self.horizontal_paned = ttk.PanedWindow(self.vertical_paned, orient="horizontal")
         self.vertical_paned.add(self.horizontal_paned, weight=4)
 
@@ -116,7 +129,6 @@ class MainWindow:
         self.left_notebook = ttk.Notebook(self.horizontal_paned)
         self.left_notebook.pack(side="left", fill="y", padx=5, pady=5)
 
-        # Instrument tab: existing SetupPanel
         self.setup_panel = SetupPanel(
             self.left_notebook,
             on_status=self.set_status,
@@ -125,7 +137,6 @@ class MainWindow:
         self.setup_panel.pack(fill="both", expand=True, padx=5, pady=5)
         self.left_notebook.add(self.setup_panel, text="Instrument")
 
-        # Session tab: new SessionPanel
         self.session_panel = SessionPanel(
             self.left_notebook,
             mode=self.session_panel_mode,
@@ -138,7 +149,6 @@ class MainWindow:
 
         self.horizontal_paned.add(self.left_notebook, weight=0)
 
-        # Center run panel
         self.run_panel = RunPanel(
             self.horizontal_paned,
             on_run_callback=self.run_selected_session,
@@ -149,7 +159,6 @@ class MainWindow:
         self.run_panel.pack(side="left", fill="both", expand=True, padx=5, pady=5)
         self.horizontal_paned.add(self.run_panel, weight=1)
 
-        # Right results panel with emphasis
         self.results_panel = ResultsPanel(
             self.horizontal_paned,
             on_status=self.set_status,
@@ -185,6 +194,7 @@ class MainWindow:
         self.command_panel.log_panel = self.log_panel
 
     def set_status(self, message, level="INFO"):
+        """Update the top status bar text with color coding."""
         colors = {
             "INFO": "#333333",
             "SUCCESS": "#008000",
@@ -194,6 +204,57 @@ class MainWindow:
         }
         fg = colors.get(level.upper(), "#333333")
         self.status_display.config(text=message, fg=fg)
+
+    def show_completion_banner(self, message, level="SUCCESS"):
+        """Show a non-blocking completion banner and soft beep feedback.
+
+        Success: two short beeps.
+        Failure: three short beeps.
+        """
+        colors = {
+            "SUCCESS": "#d9f2d9",
+            "ERROR": "#f2d9d9",
+        }
+        fg = {
+            "SUCCESS": "#006600",
+            "ERROR": "#990000",
+        }.get(level, "#000000")
+
+        bg = colors.get(level, "#ffffff")
+
+        if self._banner_after_id is not None:
+            try:
+                self.root.after_cancel(self._banner_after_id)
+            except Exception:
+                pass
+            self._banner_after_id = None
+
+        self.banner_label.config(
+            text=message,
+            bg=bg,
+            fg=fg,
+        )
+        self.banner_label.pack(fill="x", padx=10, pady=(2, 2))
+
+        # Soft non-annoying beep pattern.
+        if level == "SUCCESS":
+            self.root.bell()
+            self.root.after(130, self.root.bell)
+        else:
+            self.root.bell()
+            self.root.after(130, self.root.bell)
+            self.root.after(260, self.root.bell)
+
+        # Auto-hide after configured duration.
+        self._banner_after_id = self.root.after(
+            self.BANNER_DURATION_MS,
+            self.hide_completion_banner,
+        )
+
+    def hide_completion_banner(self):
+        """Hide the completion banner."""
+        self.banner_label.pack_forget()
+        self._banner_after_id = None
 
     def log(self, message, level="INFO"):
         if hasattr(self.log_panel, "log_terminal"):
@@ -228,6 +289,7 @@ class MainWindow:
         except SessionRunnerError as exc:
             self.log(f"Session run failed: {exc}", "ERROR")
             self.set_status("Session run failed", "ERROR")
+            self.show_completion_banner("Session run failed", "ERROR")
             return
 
         self.results_panel.set_results(results)
@@ -247,6 +309,9 @@ class MainWindow:
         except Exception as exc:
             self.log(f"Report generation failed: {exc}", "WARNING")
 
+        self.set_status("Session complete", "SUCCESS")
+        self.show_completion_banner("Session run complete", "SUCCESS")
+
     def run_frequency_verification(self):
         source_id = "rigol_dg2102_usb"
         dut_id = "rtc1002-lab1"
@@ -262,6 +327,7 @@ class MainWindow:
         except PhysicalVerificationError as exc:
             self.log(f"Verification failed: {exc}", "ERROR")
             self.set_status("Verification failed", "ERROR")
+            self.show_completion_banner("Verification failed", "ERROR")
             return
 
         self.results_panel.set_verification_results(results)
@@ -277,15 +343,13 @@ class MainWindow:
                 for r in results
             ]
             report_generator = ReportGenerator()
-            report_path = report_generator.generate_report(
-                data,
-                prefix="Verification",
-            )
+            report_path = report_generator.generate_report(data, prefix="Verification")
             self.log(f"Verification report saved to: {report_path}", "SUCCESS")
         except Exception as exc:
             self.log(f"Verification report generation failed: {exc}", "WARNING")
 
         self.set_status("Verification complete", "SUCCESS")
+        self.show_completion_banner("Verification complete", "SUCCESS")
 
     def run_spot_check(self):
         source_id = "rigol_dg2102_usb"
@@ -301,24 +365,30 @@ class MainWindow:
             if not freq_text:
                 self.log("Frequency is required for this waveform.", "ERROR")
                 self.set_status("Spot check failed", "ERROR")
+                self.show_completion_banner("Spot check failed", "ERROR")
                 return
             try:
                 frequency = float(freq_text)
             except ValueError:
                 self.log("Invalid frequency value.", "ERROR")
                 self.set_status("Spot check failed", "ERROR")
+                self.show_completion_banner("Spot check failed", "ERROR")
                 return
+
         try:
             amplitude = float(ampl_text)
         except ValueError:
             self.log("Invalid amplitude value.", "ERROR")
             self.set_status("Spot check failed", "ERROR")
+            self.show_completion_banner("Spot check failed", "ERROR")
             return
+
         try:
             offset = float(offset_text)
         except ValueError:
             self.log("Invalid offset value.", "ERROR")
             self.set_status("Spot check failed", "ERROR")
+            self.show_completion_banner("Spot check failed", "ERROR")
             return
 
         self.set_status("Running waveform spot check ...", "RUNNING")
@@ -336,10 +406,10 @@ class MainWindow:
         except PhysicalVerificationError as exc:
             self.log(f"Spot check failed: {exc}", "ERROR")
             self.set_status("Spot check failed", "ERROR")
+            self.show_completion_banner("Spot check failed", "ERROR")
             return
 
-        # Display single result in results panel as verification row.
         self.results_panel.set_verification_results([result])
-
         self.log(f"Spot check result: {result}", "SUCCESS")
         self.set_status("Spot check complete", "SUCCESS")
+        self.show_completion_banner("Spot check complete", "SUCCESS")
