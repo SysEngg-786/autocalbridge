@@ -3,6 +3,7 @@
 # Purpose: Results panel showing result table and summary.
 #          Supports both full calibration session results and simpler
 #          physical verification sweep results.
+#          Uses larger fonts and wider columns for demo readability.
 
 import tkinter as tk
 from tkinter import ttk
@@ -40,6 +41,9 @@ class ResultsPanel(ttk.Frame):
         super().__init__(parent, padding=10)
         self.on_status = on_status
 
+        # Larger font for demo readability.
+        self.table_font = ("Segoe UI", 11)
+
         self.create_widgets()
 
     def create_widgets(self):
@@ -52,18 +56,29 @@ class ResultsPanel(ttk.Frame):
             self,
             textvariable=self.summary_var,
             foreground="#003366",
-            font=("Segoe UI", 9, "bold"),
+            font=("Segoe UI", 10, "bold"),
         )
         summary_label.pack(anchor="w", pady=(0, 5))
 
         # Treeview for result rows
         columns = list(self.VERIFICATION_COLUMNS)
-        self.tree = ttk.Treeview(self, columns=columns, show="headings", height=20)
+        self.tree = ttk.Treeview(
+            self,
+            columns=columns,
+            show="headings",
+            height=20,
+            style="Results.Treeview",
+        )
 
         # Define headings and widths
         for col in columns:
             self.tree.heading(col, text=col)
-            self.tree.column(col, width=90, anchor="w", stretch=True)
+            self.tree.column(col, width=120, anchor="w", stretch=True)
+
+        # Apply larger font to treeview rows and headings.
+        style = ttk.Style()
+        style.configure("Results.Treeview", font=self.table_font, rowheight=26)
+        style.configure("Results.Treeview.Heading", font=("Segoe UI", 10, "bold"))
 
         # Vertical scrollbar
         vsb = ttk.Scrollbar(self, orient="vertical", command=self.tree.yview)
@@ -82,7 +97,7 @@ class ResultsPanel(ttk.Frame):
         self.tree["columns"] = list(columns)
         for col in columns:
             self.tree.heading(col, text=col)
-            self.tree.column(col, width=90, anchor="w", stretch=True)
+            self.tree.column(col, width=120, anchor="w", stretch=True)
 
     def set_results(self, results):
         """

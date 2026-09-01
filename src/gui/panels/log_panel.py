@@ -1,8 +1,9 @@
 # File: src/gui/panels/log_panel.py
 # Path: /d/Projects/autocalbridge/src/gui/panels/log_panel.py
 # Purpose: Bottom log/audit panel using the existing LogTerminal widget.
-#          Adds a Clear button and right-click context menu with Copy and
-#          Select All actions.
+#          Removed duplicate System Log title and Clear button from this
+#          panel. Clear will live in CommandPanel next to Send to save
+#          vertical space.
 
 import tkinter as tk
 from tkinter import ttk
@@ -21,27 +22,7 @@ class LogPanel(ttk.Frame):
         self.bind_context_menu()
 
     def create_widgets(self, height):
-        """Create header row and log terminal."""
-        # Header row with title and Clear button
-        header = ttk.Frame(self)
-        header.pack(fill="x", pady=(0, 3))
-
-        title_label = ttk.Label(
-            header,
-            text="System Log",
-            font=("Segoe UI", 10, "bold"),
-        )
-        title_label.pack(side="left")
-
-        self.clear_button = ttk.Button(
-            header,
-            text="Clear",
-            command=self.clear_log,
-            width=8,
-        )
-        self.clear_button.pack(side="right")
-
-        # Log terminal
+        """Create only the LogTerminal. No duplicate header."""
         self.log_terminal = LogTerminal(self, height=height)
         self.log_terminal.frame.pack(fill="both", expand=True)
 
@@ -52,7 +33,6 @@ class LogPanel(ttk.Frame):
 
         text_widget = self.log_terminal.text
 
-        # Only bind after widget exists
         self.context_menu = tk.Menu(self, tearoff=0)
         self.context_menu.add_command(label="Copy", command=self.copy_selection)
         self.context_menu.add_command(label="Select All", command=self.select_all)
@@ -79,7 +59,6 @@ class LogPanel(ttk.Frame):
         try:
             selected_text = text_widget.get(tk.SEL_FIRST, tk.SEL_LAST)
         except tk.TclError:
-            # No selection
             return
 
         self.clipboard_clear()

@@ -4,7 +4,8 @@
 #          Top status ribbon, prominent instrument display, Exit button.
 #          Left notebook contains Instrument and Session tabs.
 #          Right results panel, bottom command+log area remain unchanged.
-#          Includes physical frequency verification action.
+#          Includes physical frequency verification and waveform spot check.
+#          Results panel has higher weight for demo emphasis.
 
 import os
 import tkinter as tk
@@ -21,6 +22,7 @@ from src.core.session_runner import run_session, SessionRunnerError
 from src.core.report_generator import ReportGenerator
 from src.core.physical_verification import (
     run_physical_freq_sweep,
+    run_waveform_spot_check,
     PhysicalVerificationError,
 )
 from src.utils.structured_logger import setup_logging
@@ -142,17 +144,18 @@ class MainWindow:
             on_run_callback=self.run_selected_session,
             on_status=self.set_status,
             on_verification_callback=self.run_frequency_verification,
+            on_spot_check_callback=self.run_spot_check,
         )
         self.run_panel.pack(side="left", fill="both", expand=True, padx=5, pady=5)
         self.horizontal_paned.add(self.run_panel, weight=1)
 
-        # Right results panel
+        # Right results panel with emphasis
         self.results_panel = ResultsPanel(
             self.horizontal_paned,
             on_status=self.set_status,
         )
         self.results_panel.pack(side="right", fill="y", padx=5, pady=5)
-        self.horizontal_paned.add(self.results_panel, weight=0)
+        self.horizontal_paned.add(self.results_panel, weight=2)
 
         # Bottom container: command panel above log panel with border
         bottom_container = ttk.Frame(self.vertical_paned)
@@ -283,3 +286,60 @@ class MainWindow:
             self.log(f"Verification report generation failed: {exc}", "WARNING")
 
         self.set_status("Verification complete", "SUCCESS")
+
+    def run_spot_check(self):
+        source_id = "rigol_dg2102_usb"
+        dut_id = "rtc1002-lab1"
+
+        waveform = self.run_panel.waveform_var.get().strip().upper()
+        freq_text = self.run_panel.spot_freq_var.get().strip()
+        ampl_text = self.run_panel.spot_ampl_var.get().strip()
+        offset_text = self.run_panel.spot_offset_var.get().strip()
+
+        frequency = None
+        if waveform != "NOIS":
+            if not freq_text:
+                self.log("Frequency is required for this waveform.", "ERROR")
+                self.set_status("Spot check failed", "ERROR")
+                return
+            try:
+                frequency = float(freq_text)
+            except ValueError:
+                self.log("Invalid frequency value.", "ERROR")
+                self.set_status("Spot check failed", "ERROR")
+                return
+        try:
+            amplitude = float(ampl_text)
+        except ValueError:
+            self.log("Invalid amplitude value.", "ERROR")
+            self.set_status("Spot check failed", "ERROR")
+            return
+        try:
+            offset = float(offset_text)
+        except ValueError:
+            self.log("Invalid offset value.", "ERROR")
+            self.set_status("Spot check failed", "ERROR")
+            return
+
+        self.set_status("Running waveform spot check ...", "RUNNING")
+        self.log(f"Running spot check: {waveform} freq={frequency} ampl={amplitude} offset={offset}")
+
+        try:
+            result = run_waveform_spot_check(
+                source_id=source_id,
+                dut_id=dut_id,
+                waveform=waveform,
+                frequency=frequency,
+                amplitude=amplitude,
+                offset=offset,
+            )
+        except PhysicalVerificationError as exc:
+            self.log(f"Spot check failed: {exc}", "ERROR")
+            self.set_status("Spot check failed", "ERROR")
+            return
+
+        # Display single result in results panel as verification row.
+        self.results_panel.set_verification_results([result])
+
+        self.log(f"Spot check result: {result}", "SUCCESS")
+        self.set_status("Spot check complete", "SUCCESS")

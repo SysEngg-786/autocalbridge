@@ -6,7 +6,7 @@
 #          Instrument dropdown and Refresh button share one row.
 #          Test Connection button is below the dropdown row.
 #          Network Setup button is a placeholder for future work.
-#          Updates the top status bar with instrument and connection state.
+#          Uses raised 3D-style buttons for consistency.
 
 import os
 import tkinter as tk
@@ -30,22 +30,36 @@ class SetupPanel(ttk.Frame):
         self.log_panel = log_panel
         self.registry = None
 
-        # Display-name to actual registry ID mapping.
         self._instrument_display_to_id = {}
         self._instrument_id_to_display = {}
 
         self.create_widgets()
         self.refresh_all()
 
+    def _create_action_button(self, parent, text, command, width=None):
+        """Create a raised 3D-style action button."""
+        return tk.Button(
+            parent,
+            text=text,
+            command=command,
+            relief="raised",
+            bd=3,
+            bg="#d9d9d9",
+            activebackground="#b3b3b3",
+            activeforeground="#000000",
+            font=("Segoe UI", 9, "bold"),
+            padx=6,
+            pady=3,
+            width=width,
+        )
+
     def create_widgets(self):
         """Create setup panel widgets."""
-        # Header
         ttk.Label(self, text="Setup", font=("Segoe UI", 11, "bold")).pack(anchor="w", pady=(0, 8))
 
-        # Instrument section
         ttk.Label(self, text="Instrument", font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(0, 3))
 
-        # Row containing dropdown and Refresh button (same line).
+        # Row containing dropdown and Refresh button.
         instrument_row = ttk.Frame(self)
         instrument_row.pack(fill="x", pady=(0, 3))
 
@@ -54,60 +68,56 @@ class SetupPanel(ttk.Frame):
             instrument_row,
             textvariable=self.instrument_var,
             state="readonly",
-            width=22
+            width=22,
         )
         self.instrument_combo.pack(side="left", fill="x", expand=True, padx=(0, 3))
         self.instrument_combo.bind("<<ComboboxSelected>>", self.on_instrument_selected)
 
-        self.refresh_button = ttk.Button(
+        self.refresh_button = self._create_action_button(
             instrument_row,
             text="Refresh",
             command=self.refresh_instruments,
-            width=8
+            width=8,
         )
         self.refresh_button.pack(side="left")
 
         # Test Connection button below the row.
-        self.test_button = ttk.Button(
+        self.test_button = self._create_action_button(
             self,
             text="Test Connection",
             command=self.test_selected_instrument,
-            state="disabled"
         )
         self.test_button.pack(fill="x", pady=(0, 3))
 
-        # Show simulators toggle. Default is off.
+        # Show simulators toggle.
         self.show_simulators_var = tk.BooleanVar(value=False)
         self.show_simulators_check = ttk.Checkbutton(
             self,
             text="Show simulators",
             variable=self.show_simulators_var,
-            command=self.refresh_instruments
+            command=self.refresh_instruments,
         )
         self.show_simulators_check.pack(anchor="w", pady=(0, 3))
 
         # Network Setup placeholder button.
-        self.network_setup_button = ttk.Button(
+        self.network_setup_button = self._create_action_button(
             self,
             text="Network Setup...",
             command=self.network_setup,
         )
         self.network_setup_button.pack(fill="x", pady=(0, 8))
 
-        # Instrument info label
         self.instrument_info_label = ttk.Label(
             self,
             text="No instrument selected.",
             foreground="#666666",
             wraplength=220,
-            justify="left"
+            justify="left",
         )
         self.instrument_info_label.pack(anchor="w", pady=(0, 8))
 
-        # Separator
         ttk.Separator(self, orient="horizontal").pack(fill="x", pady=8)
 
-        # Session section
         ttk.Label(self, text="Session", font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(0, 3))
 
         self.session_var = tk.StringVar()
@@ -115,20 +125,19 @@ class SetupPanel(ttk.Frame):
             self,
             textvariable=self.session_var,
             state="readonly",
-            width=28
+            width=28,
         )
         self.session_combo.pack(fill="x", pady=2)
 
-        ttk.Button(
+        self.refresh_sessions_button = self._create_action_button(
             self,
             text="Refresh Sessions",
-            command=self.refresh_sessions
-        ).pack(anchor="w", pady=(2, 8))
+            command=self.refresh_sessions,
+        )
+        self.refresh_sessions_button.pack(anchor="w", pady=(2, 8))
 
-        # Separator
         ttk.Separator(self, orient="horizontal").pack(fill="x", pady=8)
 
-        # Procedure section
         ttk.Label(self, text="Procedure", font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(0, 3))
 
         self.procedure_var = tk.StringVar()
@@ -136,15 +145,16 @@ class SetupPanel(ttk.Frame):
             self,
             textvariable=self.procedure_var,
             state="readonly",
-            width=28
+            width=28,
         )
         self.procedure_combo.pack(fill="x", pady=2)
 
-        ttk.Button(
+        self.refresh_procedures_button = self._create_action_button(
             self,
             text="Refresh Procedures",
-            command=self.refresh_procedures
-        ).pack(anchor="w", pady=(2, 8))
+            command=self.refresh_procedures,
+        )
+        self.refresh_procedures_button.pack(anchor="w", pady=(2, 8))
 
     def log(self, message, level="INFO"):
         """Route a message to the log panel if available."""
@@ -168,11 +178,7 @@ class SetupPanel(ttk.Frame):
         self.refresh_procedures()
 
     def refresh_instruments(self):
-        """Load registered instrument IDs into the combobox.
-
-        By default only physical instruments are shown. Virtual instruments
-        are included only when "Show simulators" is enabled.
-        """
+        """Load registered instrument IDs into the combobox."""
         try:
             self.registry = load_registry()
         except Exception as exc:
@@ -229,9 +235,7 @@ class SetupPanel(ttk.Frame):
         """Return sorted .yaml filenames from a directory."""
         if not os.path.isdir(directory):
             return []
-        return sorted(
-            [f for f in os.listdir(directory) if f.endswith(".yaml")]
-        )
+        return sorted(f for f in os.listdir(directory) if f.endswith(".yaml"))
 
     def get_selected_instrument_id(self):
         """Return the actual registry ID for the selected display name."""

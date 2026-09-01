@@ -1,36 +1,34 @@
 # File: src/core/physical_verification.py
 # Path: /d/Projects/autocalbridge/src/core/physical_verification.py
-# Purpose: Reusable physical two-ended frequency verification sweep.
-#          Currently defaulted for Rigol DG2102 -> R&S RTC1002, but the
-#          function accepts optional arguments so user-defined verification
-#          can be added later without rewriting core logic.
+# Purpose: Reusable physical two-ended verification functions.
+#          Contains:
+#          - run_physical_freq_sweep
+#          - run_waveform_spot_check
+#          Defaults are tuned for Rigol DG2102 -> R&S RTC1002, but
+#          functions accept optional arguments for future flexibility.
 
 """
-Physical verification sweep.
+Physical verification module.
 
-This module extracts the proven physical frequency sweep logic from the CLI
-script into a reusable function. It is used by:
+This module contains reusable verification functions used by CLI and GUI.
 
-- scripts/verify_physical_freq_sweep.py  (CLI)
-- GUI verification button later
-
-The default values are tuned for the current concept-validation setup:
-
-    Source: Rigol DG2102 via USB
-    DUT:    R&S RTC1002 via LAN
-
-No GUI or CLI dependencies exist in this module. It calls the existing
-command layer through run_single_command().
+Design principle:
+    Build today's demo capability as a permanent, config-driven suite,
+    not a throwaway script. Future instruments, waveforms, and measurement
+    strategies should attach to these seams without rewriting core logic.
 """
 
 import time
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from src.cli.instrument_commands import run_single_command
 
 
-# Default verification points in Hz.
+# ---------------------------------------------------------------------------
+# Default values for current physical pair
+# ---------------------------------------------------------------------------
+
 DEFAULT_FREQUENCY_POINTS = [
     1000,
     10000,
@@ -39,7 +37,6 @@ DEFAULT_FREQUENCY_POINTS = [
     5000000,
 ]
 
-# Default setup commands for the current physical pair.
 DEFAULT_SOURCE_SETUP_COMMANDS = [
     "SOUR1:FUNC SIN",
     "SOUR1:VOLT 1",
@@ -54,12 +51,19 @@ DEFAULT_DUT_SETUP_COMMANDS = [
     "MEAS1:ENAB ON",
 ]
 
-# Default source command template and DUT query.
 DEFAULT_SOURCE_FREQ_COMMAND_TEMPLATE = "SOUR1:FREQ {value}"
 DEFAULT_DUT_QUERY_COMMAND = "MEAS1:RES?"
 
-# Sentinel value used by RTC when a measurement is unavailable.
 INVALID_MEASUREMENT_SENTINEL = 9.91e37
+
+# Supported waveform types for spot check.
+WAVEFORM_COMMANDS: Dict[str, str] = {
+    "SIN": "SOUR1:FUNC SIN",
+    "SQU": "SOUR1:FUNC SQU",
+    "RAMP": "SOUR1:FUNC RAMP",
+    "PULS": "SOUR1:FUNC PULS",
+    "NOIS": "SOUR1:FUNC NOIS",
+}
 
 
 class PhysicalVerificationError(Exception):
@@ -75,14 +79,14 @@ class VerificationPointResult:
     One verification point result.
 
     Attributes:
-        target: Expected frequency in Hz.
-        measured: DUT measurement in Hz. May be the invalid sentinel.
-        status: "OK" or "FAIL".
-        error: Absolute error in Hz, or None if measurement invalid.
+        target: Expected frequency in Hz. May be None for stimulus-only.
+        measured: DUT measurement in Hz. May be None if not measured.
+        status: "OK", "FAIL", or "STIMULUS_SENT".
+        error: Absolute error in Hz, or None if not applicable.
     """
 
-    target: float
-    measured: float
+    target: Optional[float]
+    measured: Optional[float]
     status: str
     error: Optional[float] = None
 
@@ -103,7 +107,7 @@ def run_physical_freq_sweep(
     Args:
         source_id: Registry ID of the source instrument.
         dut_id: Registry ID of the DUT instrument.
-        points: Optional list of frequencies in Hz. If None, defaults are used.
+        points: Optional list of frequencies in Hz.
         settle_delay: Seconds to wait after each source change.
         source_setup_commands: Optional list of source setup write commands.
         dut_setup_commands: Optional list of DUT setup write commands.
@@ -112,12 +116,7 @@ def run_physical_freq_sweep(
 
     Returns:
         List[VerificationPointResult]: One result per frequency point.
-
-    Raises:
-        PhysicalVerificationError: If setup commands fail.
     """
-    # Apply defaults where arguments are not supplied. This is the seam for
-    # future user-defined verification without changing the function core.
     points = points or DEFAULT_FREQUENCY_POINTS
     source_setup_commands = source_setup_commands or DEFAULT_SOURCE_SETUP_COMMANDS
     dut_setup_commands = dut_setup_commands or DEFAULT_DUT_SETUP_COMMANDS
@@ -126,36 +125,29 @@ def run_physical_freq_sweep(
     )
     dut_query_command = dut_query_command or DEFAULT_DUT_QUERY_COMMAND
 
-    # Run source setup once.
+    # Source setup.
     for cmd in source_setup_commands:
         ok, resp = run_single_command(source_id, cmd)
         if not ok:
-            raise PhysicalVerificationError(
-                f"Source setup failed: {cmd} -> {resp}"
-            )
+            raise PhysicalVerificationError(f"Source setup failed: {cmd} -> {resp}")
 
-    # Run DUT setup once.
+    # DUT setup.
     for cmd in dut_setup_commands:
         ok, resp = run_single_command(dut_id, cmd)
         if not ok:
-            raise PhysicalVerificationError(
-                f"DUT setup failed: {cmd} -> {resp}"
-            )
+            raise PhysicalVerificationError(f"DUT setup failed: {cmd} -> {resp}")
 
     results: List[VerificationPointResult] = []
 
-    # Sweep each frequency point.
     for freq in points:
         source_command = source_freq_command_template.format(value=freq)
-
         ok_set, resp_set = run_single_command(source_id, source_command)
         if not ok_set:
             raise PhysicalVerificationError(
                 f"Source frequency set failed for {freq}: {resp_set}"
             )
 
-        # Set DUT timebase to show about 10 cycles across 12 divisions.
-        # This is required by the RTC1002 automatic frequency measurement.
+        # Set DUT timebase to show roughly 10 cycles across 12 divisions.
         period = 1.0 / freq
         timebase = (10 * period) / 12.0
         run_single_command(dut_id, f"TIM:SCAL {timebase:.10g}")
@@ -164,7 +156,6 @@ def run_physical_freq_sweep(
         time.sleep(settle_delay)
 
         ok_meas, resp_meas = run_single_command(dut_id, dut_query_command)
-
         if not ok_meas:
             raise PhysicalVerificationError(
                 f"DUT measurement failed for {freq}: {resp_meas}"
@@ -194,3 +185,133 @@ def run_physical_freq_sweep(
         )
 
     return results
+
+
+def run_waveform_spot_check(
+    source_id: str,
+    dut_id: str,
+    waveform: str,
+    frequency: Optional[float] = None,
+    amplitude: float = 1.0,
+    offset: float = 0.0,
+    settle_delay: float = 1.5,
+) -> VerificationPointResult:
+    """
+    Run a single waveform spot check.
+
+    For Noise:
+        - frequency is ignored
+        - no frequency measurement is performed
+        - status is "STIMULUS_SENT"
+
+    For all other supported waveforms:
+        - frequency, amplitude, offset are set on source
+        - DUT frequency is measured and compared
+
+    Args:
+        source_id: Registry ID of source instrument.
+        dut_id: Registry ID of DUT instrument.
+        waveform: One of "SIN", "SQU", "RAMP", "PULS", "NOIS".
+        frequency: Frequency in Hz. Required except for NOIS.
+        amplitude: Amplitude in Vpp.
+        offset: DC offset in V.
+        settle_delay: Settle time in seconds after source changes.
+
+    Returns:
+        VerificationPointResult
+    """
+    waveform_key = waveform.strip().upper()
+
+    if waveform_key not in WAVEFORM_COMMANDS:
+        raise PhysicalVerificationError(
+            f"Unsupported waveform '{waveform}'. "
+            f"Supported: {sorted(WAVEFORM_COMMANDS.keys())}"
+        )
+
+    # Select waveform.
+    ok, resp = run_single_command(source_id, WAVEFORM_COMMANDS[waveform_key])
+    if not ok:
+        raise PhysicalVerificationError(f"Waveform set failed: {resp}")
+
+    # Set amplitude and offset.
+    for cmd in [
+        f"SOUR1:VOLT {amplitude}",
+        f"SOUR1:VOLT:OFFS {offset}",
+    ]:
+        ok, resp = run_single_command(source_id, cmd)
+        if not ok:
+            raise PhysicalVerificationError(f"Source parameter failed: {cmd} -> {resp}")
+
+    # Enable output.
+    ok, resp = run_single_command(source_id, "OUTP1 ON")
+    if not ok:
+        raise PhysicalVerificationError(f"Output enable failed: {resp}")
+
+    # Noise is stimulus-only.
+    if waveform_key == "NOIS":
+        time.sleep(settle_delay)
+        return VerificationPointResult(
+            target=None,
+            measured=None,
+            status="STIMULUS_SENT",
+            error=None,
+        )
+
+    # Non-noise waveforms require frequency.
+    if frequency is None:
+        raise PhysicalVerificationError(
+            f"Frequency is required for waveform '{waveform}'."
+        )
+
+    # Set frequency.
+    ok, resp = run_single_command(source_id, f"SOUR1:FREQ {frequency}")
+    if not ok:
+        raise PhysicalVerificationError(f"Frequency set failed: {resp}")
+
+    # Ensure DUT measurement setup for frequency.
+    dut_setup_commands = [
+        "ACQ:STAT RUN",
+        "CHAN1:STAT ON",
+        "MEAS1:SOUR CH1",
+        "MEAS1:MAIN FREQ",
+        "MEAS1:ENAB ON",
+    ]
+    for cmd in dut_setup_commands:
+        ok, resp = run_single_command(dut_id, cmd)
+        if not ok:
+            raise PhysicalVerificationError(f"DUT setup failed: {cmd} -> {resp}")
+
+    # Set DUT timebase for this frequency.
+    period = 1.0 / frequency
+    timebase = (10 * period) / 12.0
+    run_single_command(dut_id, f"TIM:SCAL {timebase:.10g}")
+    run_single_command(dut_id, "CHAN1:SCAL 0.2")
+
+    time.sleep(settle_delay)
+
+    ok_meas, resp_meas = run_single_command(dut_id, DEFAULT_DUT_QUERY_COMMAND)
+    if not ok_meas:
+        raise PhysicalVerificationError(
+            f"DUT measurement failed for {frequency}: {resp_meas}"
+        )
+
+    try:
+        measured = float(resp_meas)
+    except ValueError as exc:
+        raise PhysicalVerificationError(
+            f"DUT returned non-numeric measurement for {frequency}: {resp_meas}"
+        ) from exc
+
+    if measured == INVALID_MEASUREMENT_SENTINEL:
+        status = "FAIL"
+        error = None
+    else:
+        status = "OK"
+        error = abs(measured - frequency)
+
+    return VerificationPointResult(
+        target=frequency,
+        measured=measured,
+        status=status,
+        error=error,
+    )
