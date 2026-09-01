@@ -1,12 +1,10 @@
 # File: scripts/verify_physical_freq_sweep.py
 # Path: /d/Projects/autocalbridge/scripts/verify_physical_freq_sweep.py
-# Purpose: Reusable physical two-ended frequency sweep verification.
-#          Sets source frequency and reads DUT measurement using existing
-#          ACB CLI command functions. No session/procedure files required.
+# Purpose: Thin CLI wrapper for the reusable physical verification sweep.
+#          Uses src.core.physical_verification.run_physical_freq_sweep.
 
 import argparse
 import sys
-import time
 
 # Ensure project root is on sys.path when running directly or as module.
 import os
@@ -14,19 +12,10 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from src.cli.instrument_commands import run_single_command
-
-
-def run_setup_commands(entry_id, commands, label):
-    """Run a list of write commands on an instrument entry."""
-    print(f"--- {label} setup ---")
-    for cmd in commands:
-        ok, resp = run_single_command(entry_id, cmd)
-        if not ok:
-            print(f"  FAIL {cmd}: {resp}")
-            return False
-        print(f"  OK   {cmd}")
-    return True
+from src.core.physical_verification import (
+    run_physical_freq_sweep,
+    PhysicalVerificationError,
+)
 
 
 def main():
@@ -65,6 +54,11 @@ def main():
         help="Semicolon-separated DUT setup commands",
     )
     parser.add_argument(
+        "--source-freq-template",
+        default="SOUR1:FREQ {value}",
+        help="Source frequency command template with {value} placeholder",
+    )
+    parser.add_argument(
         "--dut-query",
         default="MEAS1:RES?",
         help="DUT query command for measurement result",
@@ -76,12 +70,19 @@ def main():
     source_setup = [x.strip() for x in args.source_setup.split(";") if x.strip()]
     dut_setup = [x.strip() for x in args.dut_setup.split(";") if x.strip()]
 
-    # Run setup once before sweep.
-    if not run_setup_commands(args.source_id, source_setup, "Source"):
-        print("Source setup failed. Aborting.")
-        return 1
-    if not run_setup_commands(args.dut_id, dut_setup, "DUT"):
-        print("DUT setup failed. Aborting.")
+    try:
+        results = run_physical_freq_sweep(
+            source_id=args.source_id,
+            dut_id=args.dut_id,
+            points=points,
+            settle_delay=args.settle_delay,
+            source_setup_commands=source_setup,
+            dut_setup_commands=dut_setup,
+            source_freq_command_template=args.source_freq_template,
+            dut_query_command=args.dut_query,
+        )
+    except PhysicalVerificationError as exc:
+        print(f"Verification failed: {exc}")
         return 1
 
     print("\n--- Frequency sweep ---")
@@ -89,38 +90,11 @@ def main():
     print("-" * 44)
 
     all_ok = True
-    for freq in points:
-        # Set source frequency.
-        ok_set, resp_set = run_single_command(
-            args.source_id, f"SOUR1:FREQ {freq}"
-        )
-        if not ok_set:
-            print(f"Source frequency set failed for {freq}: {resp_set}")
+    for result in results:
+        measured_str = f"{result.measured:.6e}" if result.measured is not None else "ERROR"
+        if result.status != "OK":
             all_ok = False
-            continue
-
-        # Set DUT timebase to show about 10 cycles across 12 divisions.
-        period = 1.0 / freq
-        timebase = (10 * period) / 12.0
-        run_single_command(args.dut_id, f"TIM:SCAL {timebase:.10g}")
-        run_single_command(args.dut_id, "CHAN1:SCAL 0.2")
-
-        time.sleep(args.settle_delay)
-
-        ok_meas, resp_meas = run_single_command(args.dut_id, args.dut_query)
-        if ok_meas:
-            try:
-                measured = float(resp_meas)
-                status = "OK" if measured != 9.91e37 else "FAIL"
-                if status == "FAIL":
-                    all_ok = False
-                print(f"{freq:>14.0f} | {measured:>14.6e} | {status:<6}")
-            except Exception:
-                print(f"{freq:>14.0f} | {resp_meas:>14} | FAIL")
-                all_ok = False
-        else:
-            print(f"{freq:>14.0f} | {'ERROR':>14} | FAIL")
-            all_ok = False
+        print(f"{result.target:>14.0f} | {measured_str:>14} | {result.status:<6}")
 
     print("-" * 44)
     if all_ok:

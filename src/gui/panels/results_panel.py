@@ -1,6 +1,8 @@
 # File: src/gui/panels/results_panel.py
 # Path: /d/Projects/autocalbridge/src/gui/panels/results_panel.py
 # Purpose: Results panel showing result table and summary.
+#          Supports both full calibration session results and simpler
+#          physical verification sweep results.
 
 import tkinter as tk
 from tkinter import ttk
@@ -9,6 +11,7 @@ from tkinter import ttk
 class ResultsPanel(ttk.Frame):
     """Right panel for calibration results and report summary."""
 
+    # Full session result columns.
     COLUMNS = [
         "Timestamp",
         "SessionID",
@@ -23,6 +26,14 @@ class ResultsPanel(ttk.Frame):
         "Tolerance",
         "Status",
         "Metadata",
+    ]
+
+    # Simpler verification result columns.
+    VERIFICATION_COLUMNS = [
+        "Target (Hz)",
+        "Measured (Hz)",
+        "Error (Hz)",
+        "Status",
     ]
 
     def __init__(self, parent, on_status=None):
@@ -46,7 +57,7 @@ class ResultsPanel(ttk.Frame):
         summary_label.pack(anchor="w", pady=(0, 5))
 
         # Treeview for result rows
-        columns = list(self.COLUMNS)
+        columns = list(self.VERIFICATION_COLUMNS)
         self.tree = ttk.Treeview(self, columns=columns, show="headings", height=20)
 
         # Define headings and widths
@@ -61,15 +72,27 @@ class ResultsPanel(ttk.Frame):
         self.tree.pack(side="left", fill="both", expand=True)
         vsb.pack(side="right", fill="y")
 
+    def _clear_tree(self):
+        """Clear all rows from the tree."""
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+
+    def _configure_columns(self, columns):
+        """Configure tree columns dynamically."""
+        self.tree["columns"] = list(columns)
+        for col in columns:
+            self.tree.heading(col, text=col)
+            self.tree.column(col, width=90, anchor="w", stretch=True)
+
     def set_results(self, results):
-        """Display a list of canonical TestResult objects or dictionaries.
+        """
+        Display a list of canonical TestResult objects or dictionaries.
 
         Args:
             results: List of results. Each result may be a TestResult or dict.
         """
-        # Clear existing rows
-        for item in self.tree.get_children():
-            self.tree.delete(item)
+        self._clear_tree()
+        self._configure_columns(self.COLUMNS)
 
         if not results:
             self.summary_var.set("No results.")
@@ -103,8 +126,57 @@ class ResultsPanel(ttk.Frame):
         if self.on_status is not None:
             self.on_status(f"Run complete: {passed}/{total} passed")
 
+    def set_verification_results(self, results):
+        """
+        Display physical verification sweep results.
+
+        Args:
+            results: List of VerificationPointResult objects or dicts.
+        """
+        self._clear_tree()
+        self._configure_columns(self.VERIFICATION_COLUMNS)
+
+        if not results:
+            self.summary_var.set("No verification results.")
+            return
+
+        passed = 0
+        failed = 0
+
+        for result in results:
+            if isinstance(result, dict):
+                target = result.get("target")
+                measured = result.get("measured")
+                error = result.get("error")
+                status = result.get("status", "")
+            else:
+                target = result.target
+                measured = result.measured
+                error = result.error
+                status = result.status
+
+            values = [
+                f"{target:.0f}" if target is not None else "",
+                f"{measured:.6e}" if measured is not None else "ERROR",
+                f"{error:.6e}" if error is not None else "",
+                status,
+            ]
+            self.tree.insert("", "end", values=values)
+
+            if status == "OK":
+                passed += 1
+            else:
+                failed += 1
+
+        total = passed + failed
+        self.summary_var.set(
+            f"Total: {total}   Passed: {passed}   Failed: {failed}"
+        )
+
+        if self.on_status is not None:
+            self.on_status(f"Verification complete: {passed}/{total} passed")
+
     def clear(self):
         """Clear the result table and summary."""
-        for item in self.tree.get_children():
-            self.tree.delete(item)
+        self._clear_tree()
         self.summary_var.set("No run completed.")

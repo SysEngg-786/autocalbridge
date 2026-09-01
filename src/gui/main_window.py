@@ -4,6 +4,7 @@
 #          Top status ribbon, prominent instrument display, Exit button.
 #          Left notebook contains Instrument and Session tabs.
 #          Right results panel, bottom command+log area remain unchanged.
+#          Includes physical frequency verification action.
 
 import os
 import tkinter as tk
@@ -18,6 +19,10 @@ from src.gui.panels.log_panel import LogPanel
 
 from src.core.session_runner import run_session, SessionRunnerError
 from src.core.report_generator import ReportGenerator
+from src.core.physical_verification import (
+    run_physical_freq_sweep,
+    PhysicalVerificationError,
+)
 from src.utils.structured_logger import setup_logging
 
 
@@ -113,7 +118,7 @@ class MainWindow:
         self.setup_panel = SetupPanel(
             self.left_notebook,
             on_status=self.set_status,
-            log_panel=None,  # will be wired after log panel creation
+            log_panel=None,
         )
         self.setup_panel.pack(fill="both", expand=True, padx=5, pady=5)
         self.left_notebook.add(self.setup_panel, text="Instrument")
@@ -129,7 +134,6 @@ class MainWindow:
         self.session_panel.pack(fill="both", expand=True, padx=5, pady=5)
         self.left_notebook.add(self.session_panel, text="Session")
 
-        # Add notebook to horizontal pane
         self.horizontal_paned.add(self.left_notebook, weight=0)
 
         # Center run panel
@@ -137,6 +141,7 @@ class MainWindow:
             self.horizontal_paned,
             on_run_callback=self.run_selected_session,
             on_status=self.set_status,
+            on_verification_callback=self.run_frequency_verification,
         )
         self.run_panel.pack(side="left", fill="both", expand=True, padx=5, pady=5)
         self.horizontal_paned.add(self.run_panel, weight=1)
@@ -153,7 +158,6 @@ class MainWindow:
         bottom_container = ttk.Frame(self.vertical_paned)
         self.vertical_paned.add(bottom_container, weight=1)
 
-        # Command panel wrapped in a bordered frame
         command_border_frame = tk.Frame(
             bottom_container,
             bg="#003366",
@@ -165,22 +169,19 @@ class MainWindow:
         self.command_panel = CommandPanel(
             command_border_frame,
             get_selected_instrument_id=self.get_selected_instrument_id,
-            log_panel=None,  # will be wired after log panel creation
+            log_panel=None,
             on_status=self.set_status,
         )
         self.command_panel.pack(fill="x", padx=2, pady=2)
 
-        # Log panel
         self.log_panel = LogPanel(bottom_container, height=8)
         self.log_panel.pack(fill="both", expand=True, padx=5, pady=5)
 
-        # Wire log panel to setup, session, command panels
         self.setup_panel.log_panel = self.log_panel
         self.session_panel.log_panel = self.log_panel
         self.command_panel.log_panel = self.log_panel
 
     def set_status(self, message, level="INFO"):
-        """Update the top status bar text with color coding."""
         colors = {
             "INFO": "#333333",
             "SUCCESS": "#008000",
@@ -192,23 +193,18 @@ class MainWindow:
         self.status_display.config(text=message, fg=fg)
 
     def log(self, message, level="INFO"):
-        """Route a message to the log panel."""
         if hasattr(self.log_panel, "log_terminal"):
             self.log_panel.log_terminal.log(message, level)
 
     def get_selected_instrument_id(self):
-        """Return the currently selected instrument ID from SetupPanel."""
         return self.setup_panel.get_selected_instrument_id()
 
     def on_session_created(self, session_file):
-        """Handle newly created session file."""
-        # Refresh setup panel session dropdown so new session appears.
         if hasattr(self.setup_panel, "refresh_sessions"):
             self.setup_panel.refresh_sessions()
         self.log(f"Session file created: {session_file}", "SUCCESS")
 
     def run_selected_session(self):
-        """Run the session selected in the setup panel."""
         session_file = self.setup_panel.get_selected_session_file()
 
         if not session_file:
@@ -231,7 +227,6 @@ class MainWindow:
             self.set_status("Session run failed", "ERROR")
             return
 
-        # Show results in results panel.
         self.results_panel.set_results(results)
 
         if errors:
@@ -242,10 +237,49 @@ class MainWindow:
                     "ERROR",
                 )
 
-        # Generate a CSV report and show its path.
         try:
             report_generator = ReportGenerator()
             report_path = report_generator.generate_report(results, prefix="GUI")
             self.log(f"Report saved to: {report_path}", "SUCCESS")
         except Exception as exc:
             self.log(f"Report generation failed: {exc}", "WARNING")
+
+    def run_frequency_verification(self):
+        source_id = "rigol_dg2102_usb"
+        dut_id = "rtc1002-lab1"
+
+        self.set_status("Running frequency verification ...", "RUNNING")
+        self.log(f"Running physical verification: {source_id} -> {dut_id}")
+
+        try:
+            results = run_physical_freq_sweep(
+                source_id=source_id,
+                dut_id=dut_id,
+            )
+        except PhysicalVerificationError as exc:
+            self.log(f"Verification failed: {exc}", "ERROR")
+            self.set_status("Verification failed", "ERROR")
+            return
+
+        self.results_panel.set_verification_results(results)
+
+        try:
+            data = [
+                {
+                    "Target": r.target,
+                    "Measured": r.measured,
+                    "Error": r.error,
+                    "Status": r.status,
+                }
+                for r in results
+            ]
+            report_generator = ReportGenerator()
+            report_path = report_generator.generate_report(
+                data,
+                prefix="Verification",
+            )
+            self.log(f"Verification report saved to: {report_path}", "SUCCESS")
+        except Exception as exc:
+            self.log(f"Verification report generation failed: {exc}", "WARNING")
+
+        self.set_status("Verification complete", "SUCCESS")
