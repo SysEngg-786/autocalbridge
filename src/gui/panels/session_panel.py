@@ -4,7 +4,6 @@
 #          Contains only session configuration controls.
 #          Operator mode shows physical instruments only.
 #          CICD mode includes virtual instruments.
-#          Raw SCPI and built-in checks remain in CommandPanel.
 
 import os
 import tkinter as tk
@@ -40,10 +39,6 @@ class SessionPanel(ttk.Frame):
 
         self.create_widgets()
         self.refresh_all()
-
-    # ------------------------------------------------------------------
-    # Widget creation
-    # ------------------------------------------------------------------
 
     def create_widgets(self):
         """Create session configuration widgets."""
@@ -102,7 +97,6 @@ class SessionPanel(ttk.Frame):
         self.purpose_var = tk.StringVar()
         ttk.Entry(self, textvariable=self.purpose_var, width=30).pack(fill="x", pady=(0, 8))
 
-        # Refresh buttons
         refresh_frame = ttk.Frame(self)
         refresh_frame.pack(fill="x", pady=(0, 8))
 
@@ -118,7 +112,6 @@ class SessionPanel(ttk.Frame):
             command=self.refresh_procedures,
         ).pack(side="left")
 
-        # Create session button
         self.create_button = ttk.Button(
             self,
             text="Create Session",
@@ -126,35 +119,25 @@ class SessionPanel(ttk.Frame):
         )
         self.create_button.pack(fill="x", pady=(0, 8))
 
-    # ------------------------------------------------------------------
-    # Logging and status
-    # ------------------------------------------------------------------
+    def set_mode(self, mode):
+        """Set panel mode and refresh instrument list."""
+        self.mode = mode
+        self.refresh_instruments()
 
     def log(self, message, level="INFO"):
-        """Route a message to the log panel if available."""
         if self.log_panel is not None:
             self.log_panel.log_terminal.log(message, level)
 
     def set_status(self, message, level="INFO"):
-        """Update the top status bar if callback exists."""
         if self.on_status is not None:
             self.on_status(message, level)
 
-    # ------------------------------------------------------------------
-    # Refresh data
-    # ------------------------------------------------------------------
-
     def refresh_all(self):
-        """Refresh instruments and procedures."""
         self.refresh_instruments()
         self.refresh_procedures()
 
     def refresh_instruments(self):
-        """Load registered instrument IDs into source and DUT combos.
-
-        Operator mode shows physical instruments only.
-        CICD mode includes virtual instruments.
-        """
+        """Load registered instrument IDs into source and DUT combos."""
         try:
             self.registry = load_registry()
         except Exception as exc:
@@ -206,10 +189,6 @@ class SessionPanel(ttk.Frame):
         if files and self.procedure_var.get() not in files:
             self.procedure_var.set(files[0])
 
-    # ------------------------------------------------------------------
-    # Selection helpers
-    # ------------------------------------------------------------------
-
     def _selected_source_id(self):
         display = self.source_var.get()
         return self._instrument_display_to_id.get(display, "")
@@ -217,10 +196,6 @@ class SessionPanel(ttk.Frame):
     def _selected_dut_id(self):
         display = self.dut_var.get()
         return self._instrument_display_to_id.get(display, "")
-
-    # ------------------------------------------------------------------
-    # Session creation
-    # ------------------------------------------------------------------
 
     def create_session_action(self):
         """Gather inputs and create a session file."""

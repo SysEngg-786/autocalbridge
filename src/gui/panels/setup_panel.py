@@ -2,10 +2,7 @@
 # Path: /d/Projects/autocalbridge/src/gui/panels/setup_panel.py
 # Purpose: Setup panel for instrument, session, and procedure selection.
 #          Shows physical instruments by default; simulators are hidden
-#          unless the operator explicitly enables "Show simulators".
-#          Instrument dropdown and Refresh button share one row.
-#          Test Connection button is below the dropdown row.
-#          Network Setup button is a placeholder for future work.
+#          unless CICD mode enables them explicitly.
 #          Uses raised 3D-style buttons for consistency.
 
 import os
@@ -24,8 +21,9 @@ PROCEDURES_DIR = "config/procedures"
 class SetupPanel(ttk.Frame):
     """Left panel for instrument, session, and procedure setup."""
 
-    def __init__(self, parent, on_status=None, log_panel=None):
+    def __init__(self, parent, mode="operator", on_status=None, log_panel=None):
         super().__init__(parent, padding=10)
+        self.mode = mode
         self.on_status = on_status
         self.log_panel = log_panel
         self.registry = None
@@ -34,6 +32,7 @@ class SetupPanel(ttk.Frame):
         self._instrument_id_to_display = {}
 
         self.create_widgets()
+        self.set_mode(self.mode)
         self.refresh_all()
 
     def _create_action_button(self, parent, text, command, width=None):
@@ -89,7 +88,7 @@ class SetupPanel(ttk.Frame):
         )
         self.test_button.pack(fill="x", pady=(0, 3))
 
-        # Show simulators toggle.
+        # Show simulators toggle. Packed only in CICD mode.
         self.show_simulators_var = tk.BooleanVar(value=False)
         self.show_simulators_check = ttk.Checkbutton(
             self,
@@ -97,7 +96,6 @@ class SetupPanel(ttk.Frame):
             variable=self.show_simulators_var,
             command=self.refresh_instruments,
         )
-        self.show_simulators_check.pack(anchor="w", pady=(0, 3))
 
         # Network Setup placeholder button.
         self.network_setup_button = self._create_action_button(
@@ -156,6 +154,19 @@ class SetupPanel(ttk.Frame):
         )
         self.refresh_procedures_button.pack(anchor="w", pady=(2, 8))
 
+    def set_mode(self, mode):
+        """Set panel mode and update advanced control visibility."""
+        self.mode = mode
+        if mode == "cicd":
+            if not self.show_simulators_check.winfo_manager():
+                self.show_simulators_check.pack(anchor="w", pady=(0, 3))
+        else:
+            if self.show_simulators_check.winfo_manager():
+                self.show_simulators_check.pack_forget()
+                self.show_simulators_var.set(False)
+
+        self.refresh_instruments()
+
     def log(self, message, level="INFO"):
         """Route a message to the log panel if available."""
         if self.log_panel is not None:
@@ -186,7 +197,7 @@ class SetupPanel(ttk.Frame):
             self.set_status("Registry load failed", "ERROR")
             return
 
-        show_simulators = self.show_simulators_var.get()
+        show_simulators = self.mode == "cicd" and self.show_simulators_var.get()
 
         display_items = []
         self._instrument_display_to_id = {}

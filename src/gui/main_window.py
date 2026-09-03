@@ -5,7 +5,7 @@
 #          Left notebook contains Instrument and Session tabs.
 #          Right results panel, bottom command+log area remain unchanged.
 #          Includes physical frequency verification and waveform spot check.
-#          Adds non-blocking completion banner with soft beep feedback.
+#          Adds operator/CICD mode toggle.
 
 import os
 import tkinter as tk
@@ -55,7 +55,7 @@ class MainWindow:
             padding=8,
         )
 
-        self.session_panel_mode = "operator"
+        self.current_mode = "operator"
         self._banner_after_id = None
 
         self.create_layout()
@@ -77,6 +77,18 @@ class MainWindow:
         )
         ribbon_title.pack(side="left")
 
+        # Mode toggle in the top ribbon
+        self.mode_var = tk.StringVar(value=self.current_mode)
+        self.mode_toggle = ttk.Combobox(
+            self.top_ribbon,
+            textvariable=self.mode_var,
+            values=["operator", "cicd"],
+            state="readonly",
+            width=12,
+        )
+        self.mode_toggle.pack(side="left", padx=(20, 0))
+        self.mode_toggle.bind("<<ComboboxSelected>>", self.on_mode_changed)
+
         self.exit_button = tk.Button(
             self.top_ribbon,
             text="Exit",
@@ -91,7 +103,6 @@ class MainWindow:
         )
         self.exit_button.pack(side="right")
 
-        # Prominent status display below top ribbon
         self.status_display = tk.Label(
             self.root,
             text="Instrument: --    |    Status: --",
@@ -104,33 +115,18 @@ class MainWindow:
         )
         self.status_display.pack(side="top", fill="x")
 
-        # Completion banner label, initially hidden.
-        self.banner_label = tk.Label(
-            self.root,
-            text="",
-            bg="#ffffff",
-            fg="#000000",
-            anchor="center",
-            padx=10,
-            pady=8,
-            font=("Segoe UI", 12, "bold"),
-            bd=2,
-            relief="solid",
-        )
-
-        # Main vertical paned window: main work area vs bottom log area
         self.vertical_paned = ttk.PanedWindow(self.root, orient="vertical")
         self.vertical_paned.pack(fill="both", expand=True)
 
         self.horizontal_paned = ttk.PanedWindow(self.vertical_paned, orient="horizontal")
         self.vertical_paned.add(self.horizontal_paned, weight=4)
 
-        # Left notebook with Instrument and Session tabs
         self.left_notebook = ttk.Notebook(self.horizontal_paned)
         self.left_notebook.pack(side="left", fill="y", padx=5, pady=5)
 
         self.setup_panel = SetupPanel(
             self.left_notebook,
+            mode=self.current_mode,
             on_status=self.set_status,
             log_panel=None,
         )
@@ -139,7 +135,7 @@ class MainWindow:
 
         self.session_panel = SessionPanel(
             self.left_notebook,
-            mode=self.session_panel_mode,
+            mode=self.current_mode,
             on_status=self.set_status,
             log_panel=None,
             on_session_created=self.on_session_created,
@@ -166,20 +162,20 @@ class MainWindow:
         self.results_panel.pack(side="right", fill="y", padx=5, pady=5)
         self.horizontal_paned.add(self.results_panel, weight=2)
 
-        # Bottom container: command panel above log panel with border
         bottom_container = ttk.Frame(self.vertical_paned)
         self.vertical_paned.add(bottom_container, weight=1)
 
-        command_border_frame = tk.Frame(
+        self.command_border_frame = tk.Frame(
             bottom_container,
             bg="#003366",
             bd=2,
             relief="groove",
         )
-        command_border_frame.pack(fill="x", padx=5, pady=(5, 0))
+        self.command_border_frame.pack(fill="x", padx=5, pady=(5, 0))
 
         self.command_panel = CommandPanel(
-            command_border_frame,
+            self.command_border_frame,
+            mode=self.current_mode,
             get_selected_instrument_id=self.get_selected_instrument_id,
             log_panel=None,
             on_status=self.set_status,
@@ -193,8 +189,18 @@ class MainWindow:
         self.session_panel.log_panel = self.log_panel
         self.command_panel.log_panel = self.log_panel
 
+    def on_mode_changed(self, event=None):
+        """Handle operator/CICD mode switch."""
+        new_mode = self.mode_var.get()
+        self.current_mode = new_mode
+
+        self.setup_panel.set_mode(new_mode)
+        self.session_panel.set_mode(new_mode)
+        self.command_panel.set_mode(new_mode)
+
+        self.set_status(f"Mode: {new_mode}", "INFO")
+
     def set_status(self, message, level="INFO"):
-        """Update the top status bar text with color coding."""
         colors = {
             "INFO": "#333333",
             "SUCCESS": "#008000",
@@ -206,55 +212,7 @@ class MainWindow:
         self.status_display.config(text=message, fg=fg)
 
     def show_completion_banner(self, message, level="SUCCESS"):
-        """Show a non-blocking completion banner and soft beep feedback.
-
-        Success: two short beeps.
-        Failure: three short beeps.
-        """
-        colors = {
-            "SUCCESS": "#d9f2d9",
-            "ERROR": "#f2d9d9",
-        }
-        fg = {
-            "SUCCESS": "#006600",
-            "ERROR": "#990000",
-        }.get(level, "#000000")
-
-        bg = colors.get(level, "#ffffff")
-
-        if self._banner_after_id is not None:
-            try:
-                self.root.after_cancel(self._banner_after_id)
-            except Exception:
-                pass
-            self._banner_after_id = None
-
-        self.banner_label.config(
-            text=message,
-            bg=bg,
-            fg=fg,
-        )
-        self.banner_label.pack(fill="x", padx=10, pady=(2, 2))
-
-        # Soft non-annoying beep pattern.
-        if level == "SUCCESS":
-            self.root.bell()
-            self.root.after(130, self.root.bell)
-        else:
-            self.root.bell()
-            self.root.after(130, self.root.bell)
-            self.root.after(260, self.root.bell)
-
-        # Auto-hide after configured duration.
-        self._banner_after_id = self.root.after(
-            self.BANNER_DURATION_MS,
-            self.hide_completion_banner,
-        )
-
-    def hide_completion_banner(self):
-        """Hide the completion banner."""
-        self.banner_label.pack_forget()
-        self._banner_after_id = None
+        self.run_panel.show_banner(message, level)
 
     def log(self, message, level="INFO"):
         if hasattr(self.log_panel, "log_terminal"):

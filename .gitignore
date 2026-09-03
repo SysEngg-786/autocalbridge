@@ -139,3 +139,6 @@ config/instruments_registry.yaml
 
 # Internal development records — not for public repo
 docs/dev/
+
+# Local backups of working GUI files
+backups/
