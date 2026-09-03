@@ -3,11 +3,14 @@
 # Purpose: Setup panel for instrument, session, and procedure selection.
 #          Shows physical instruments by default; simulators are hidden
 #          unless CICD mode enables them explicitly.
+#          Session dropdown shows friendly session labels when available.
 #          Uses raised 3D-style buttons for consistency.
 
 import os
 import tkinter as tk
 from tkinter import ttk
+
+import yaml
 
 from src.utils.instrument_registry import load_registry
 from src.cli.common import open_endpoint_for_entry
@@ -30,6 +33,7 @@ class SetupPanel(ttk.Frame):
 
         self._instrument_display_to_id = {}
         self._instrument_id_to_display = {}
+        self._session_display_to_file = {}
 
         self.create_widgets()
         self.set_mode(self.mode)
@@ -228,12 +232,40 @@ class SetupPanel(ttk.Frame):
             self.instrument_info_label.config(text="No instruments available.")
             self.test_button.config(state="disabled")
 
+    def _session_label_from_file(self, session_file):
+        """Return a friendly label for a session file, or fallback to filename."""
+        filename = os.path.basename(session_file)
+        try:
+            with open(session_file, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f)
+            if isinstance(data, dict):
+                label = data.get("label")
+                if isinstance(label, str) and label.strip():
+                    return label.strip()
+        except Exception:
+            pass
+        return filename
+
     def refresh_sessions(self):
-        """Load available session file names into the combobox."""
+        """Load available session files and show friendly labels."""
         files = self._list_yaml_files(SESSIONS_DIR)
-        self.session_combo["values"] = files
-        if files and self.session_var.get() not in files:
-            self.session_var.set(files[0])
+        display_items = []
+        self._session_display_to_file = {}
+
+        for filename in files:
+            full_path = os.path.join(SESSIONS_DIR, filename)
+            display = self._session_label_from_file(full_path)
+            self._session_display_to_file[display] = full_path
+            display_items.append(display)
+
+        self.session_combo["values"] = display_items
+
+        if display_items:
+            current = self.session_var.get()
+            if current not in self._session_display_to_file:
+                self.session_var.set(display_items[0])
+        else:
+            self.session_var.set("")
 
     def refresh_procedures(self):
         """Load available procedure file names into the combobox."""
@@ -312,7 +344,5 @@ class SetupPanel(ttk.Frame):
 
     def get_selected_session_file(self):
         """Return full path to the selected session file, or empty string."""
-        filename = self.session_var.get().strip()
-        if not filename:
-            return ""
-        return os.path.join(SESSIONS_DIR, filename)
+        display = self.session_var.get().strip()
+        return self._session_display_to_file.get(display, "")
